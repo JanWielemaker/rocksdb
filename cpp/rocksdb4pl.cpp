@@ -822,14 +822,17 @@ PREDICATE(rocks_get, 3)
 	 );
 }
 
-PREDICATE(rocks_delete, 2)
+PREDICATE(rocks_delete, 3)
 { dbref *ref;
   PlSlice key;
+  std::string value;
 
   get_rocks(A1, &ref);
   get_slice(A2, key, ref->type.key);
-
-  return ok(ref->db->Delete(WriteOptions(), key));
+  return
+    ok(ref->db->Get(ReadOptions(), key, &value)) &&
+    unify(A3, value, ref->type.value) &&
+    ok(ref->db->Delete(WriteOptions(), key));
 }
 
 typedef struct

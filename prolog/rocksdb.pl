@@ -39,6 +39,7 @@
 	    rocks_put/3,		% +RocksDB, +Key, +Value
 	    rocks_merge/3,		% +RocksDB, +Key, +Value
 	    rocks_delete/2,		% +RocksDB, +Key
+	    rocks_delete/3,		% +RocksDB, +Key, -Value
 	    rocks_batch/2,		% +RocksDB, +Actions
 
 	    rocks_get/3,		% +RocksDB, +Key, -Value
@@ -186,8 +187,12 @@ is_meta(merge).
 %	understanding the concept of value merging in RocksDB.
 
 %%	rocks_delete(+RocksDB, +Key) is semidet.
+%%	rocks_delete(+RocksDB, +Key, -Value) is semidet.
 %
 %	Delete Key from RocksDB. Fails if Key is not in the database.
+
+rocks_delete(Db, Key) :-
+    rocks_delete(Db, Key, _).
 
 %%	rocks_get(+RocksDB, +Key, -Value) is semidet.
 %
