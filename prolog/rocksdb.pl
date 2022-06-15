@@ -44,6 +44,7 @@
 
 	    rocks_get/3,		% +RocksDB, +Key, -Value
 	    rocks_enum/3,		% +RocksDB, ?Key, ?Value
+	    rocks_enum/4,		% +RocksDB, ?Key, ?Value, +From
 
             rocks_property/2            % +RocksDB, ?Property
 	  ]).
@@ -218,6 +219,20 @@ is_meta(merge).
 %	True when Value is the current value associated with Key in
 %	RocksDB. This enumerates all keys in the database. If the value
 %	type is list(Type) or set(Type) Value is a list.
+
+%!	rocks_enum_from(+RocksDB, -Key, -Value, +Prefix) is nondet.
+%
+%	As rocks_enum/3, but starts enumerating from Prefix.  Normally
+%	only makes sence if the key is of type `atom` or `string`.  To
+%	_only_ iterate all keys with Prefix, use
+%
+%	```
+%	    rocks_enum_from(DB, Key, Value, Prefix),
+%	    (   sub_atom(Key, 0, _, _, Prefix)
+%	    ->  handle(Key, Value)
+%	    ;   !, fail
+%	    )
+%	```
 
 %!	rocks_batch(+RocksDB, +Actions:list) is det.
 %

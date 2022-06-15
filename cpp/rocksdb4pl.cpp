@@ -1087,15 +1087,27 @@ typedef struct
 } enum_state;
 
 
-PREDICATE_NONDET(rocks_enum, 3)
+static foreign_t
+rocks_enum(PlTermv PL_av, int ac, control_t handle)
 { enum_state state_buf;
   enum_state *state = &state_buf;
 
   switch(PL_foreign_control(handle))
   { case PL_FIRST_CALL:
       get_rocks(A1, &state->ref);
-      state->it = state->ref->db->NewIterator(ReadOptions());
-      state->it->SeekToFirst();
+      if ( ac >= 4 )
+      { char *prefix;
+
+	if ( !PL_get_chars(A4, &prefix,
+			   REP_UTF8|CVT_ATOM|CVT_STRING|CVT_LIST|CVT_EXCEPTION) )
+	  return FALSE;
+
+	state->it = state->ref->db->NewIterator(ReadOptions());
+	state->it->Seek(prefix);
+      } else
+      { state->it = state->ref->db->NewIterator(ReadOptions());
+	state->it->SeekToFirst();
+      }
       goto next;
     case PL_REDO:
       state = (enum_state*)PL_foreign_context_address(handle);
@@ -1136,6 +1148,14 @@ PREDICATE_NONDET(rocks_enum, 3)
       return FALSE;
   }
   PL_fail;
+}
+
+PREDICATE_NONDET(rocks_enum, 3)
+{ return rocks_enum(PL_av, 3, handle);
+}
+
+PREDICATE_NONDET(rocks_enum_from, 4)
+{ return rocks_enum(PL_av, 4, handle);
 }
 
 static PlAtom ATOM_delete("delete");
