@@ -44,7 +44,7 @@
 
 	    rocks_get/3,		% +RocksDB, +Key, -Value
 	    rocks_enum/3,		% +RocksDB, ?Key, ?Value
-	    rocks_enum/4,		% +RocksDB, ?Key, ?Value, +From
+	    rocks_enum_from/4,		% +RocksDB, ?Key, ?Value, +From
 
             rocks_property/2            % +RocksDB, ?Property
 	  ]).
