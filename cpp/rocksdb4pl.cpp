@@ -3,7 +3,8 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2016, VU University Amsterdam
+    Copyright (c)  2022, VU University Amsterdam
+			 SWI-Prolog Solutions b.v.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -63,11 +64,18 @@ typedef enum
   BLOB_TERM				/* Arbitrary term */
 } blob_type;
 
+typedef enum
+{ MERGE_NONE = 0,
+  MERGE_LIST,
+  MERGE_SET
+} merger_t;
+
 typedef struct dbref
 { rocksdb::DB	*db;			/* DB handle */
   atom_t         symbol;		/* associated symbol */
   atom_t	 name;			/* alias name */
   int	         flags;			/* flags */
+  merger_t	 builtin_merger;	/* C++ Merger */
   record_t	 merger;		/* merge option */
   struct
   { blob_type key;
@@ -333,6 +341,14 @@ public:
     double f64;
   } v;
 
+  void clear()
+  { if ( must_free )
+      PL_erase_external((char*)data_);
+    must_free = 0;
+    data_ = NULL;
+    size_ = 0;
+  }
+
   ~PlSlice()
   { if ( must_free )
       PL_erase_external((char*)data_);
@@ -494,6 +510,67 @@ unify(term_t t, const std::string &s, blob_type type)
   return unify(t, sl, type);
 }
 
+static int
+unify_value(term_t t, const Slice &s, merger_t merge, blob_type type)
+{ if ( merge == MERGE_NONE )
+  { return unify(t, s, type);
+  } else
+  { PlTail list(t);
+    PlTerm tmp;
+    const char *data = s.data();
+    const char *end  = data+s.size();
+    int rc;
+
+    while(data < end)
+    { switch( type )
+      { case BLOB_INT32:
+	{ int i;
+	  memcpy(&i, data, sizeof(i));
+	  data += sizeof(i);
+	  rc = PL_put_integer(tmp, i);
+	  break;
+	}
+        case BLOB_INT64:
+	{ int64_t i;
+	  memcpy(&i, data, sizeof(i));
+	  data += sizeof(i);
+	  rc = PL_put_int64(tmp, i);
+	  break;
+	}
+        case BLOB_FLOAT32:
+	{ float i;
+	  memcpy(&i, data, sizeof(i));
+	  data += sizeof(i);
+	  rc = PL_put_float(tmp, i);
+	  break;
+	}
+        case BLOB_FLOAT64:
+	{ double i;
+	  memcpy(&i, data, sizeof(i));
+	  data += sizeof(i);
+	  rc = PL_put_float(tmp, i);
+	  break;
+	}
+        default:
+	  assert(0);
+	  rc = FALSE;
+      }
+
+      if ( !list.append(tmp) )
+	return FALSE;
+    }
+
+    return list.close();
+  }
+}
+
+static int
+unify_value(term_t t, const std::string &s, merger_t merge, blob_type type)
+{ Slice sl(s.data(), s.length());
+
+  return unify_value(t, sl, merge, type);
+}
+
 
 		 /*******************************
 		 *	       MERGER		*
@@ -619,6 +696,139 @@ public:
   }
 };
 
+static int
+cmp_int32(const void *v1, const void *v2)
+{ int *i1 = (int*)v1;
+  int *i2 = (int*)v2;
+
+  return *i1 > *i2 ? 1 : *i1 < *i2 ? -1 : 0;
+}
+
+
+void
+sort(std::string &str, blob_type type)
+{ char *s = (char*)str.c_str();
+  size_t len = str.length();
+  size_t ulen;
+
+  if ( len > 0 )
+  { switch(type)
+    { case BLOB_INT32:
+      { int *ip = (int*)s;
+	int *op = ip+1;
+	int *ep = (int*)(s+len);
+	int cv;
+
+	qsort(s, len/sizeof(int), sizeof(int), cmp_int32);
+	cv = *ip;
+	for(ip++; ip < ep; ip++)
+	{ if ( *ip != cv )
+	    *op++ = cv = *ip;
+	}
+	str.resize((char*)op-s);
+	break;
+      }
+      case BLOB_INT64:
+      { int64_t *ip = (int64_t*)s;
+	int64_t *op = ip+1;
+	int64_t *ep = (int64_t*)(s+len);
+	int64_t cv;
+
+	qsort(s, len/sizeof(int64_t), sizeof(int64_t), cmp_int32);
+	cv = *ip;
+	for(ip++; ip < ep; ip++)
+	{ if ( *ip != cv )
+	    *op++ = cv = *ip;
+	}
+	str.resize((char*)op-s);
+	break;
+      }
+      case BLOB_FLOAT32:
+      { float *ip = (float*)s;
+	float *op = ip+1;
+	float *ep = (float*)(s+len);
+	float cv;
+
+	qsort(s, len/sizeof(float), sizeof(float), cmp_int32);
+	cv = *ip;
+	for(ip++; ip < ep; ip++)
+	{ if ( *ip != cv )
+	    *op++ = cv = *ip;
+	}
+	str.resize((char*)op-s);
+	break;
+      }
+      case BLOB_FLOAT64:
+      { double *ip = (double*)s;
+	double *op = ip+1;
+	double *ep = (double*)(s+len);
+	double cv;
+
+	qsort(s, len/sizeof(double), sizeof(double), cmp_int32);
+	cv = *ip;
+	for(ip++; ip < ep; ip++)
+	{ if ( *ip != cv )
+	    *op++ = cv = *ip;
+	}
+	str.resize((char*)op-s);
+	break;
+      }
+      default:
+	assert(0);
+	return;
+    }
+  }
+}
+
+
+class ListMergeOperator : public MergeOperator
+{ const dbref *ref;
+public:
+  ListMergeOperator(const dbref *reference) : MergeOperator()
+  { ref = reference;
+  }
+
+  virtual bool
+  FullMerge(const Slice& key,
+	    const Slice* existing_value,
+	    const std::deque<std::string>& operand_list,
+	    std::string* new_value,
+	    Logger* logger) const override
+  { std::string s;
+
+    if ( existing_value )
+      s += existing_value->ToString();
+
+    for (const auto& value : operand_list)
+    { s += value;
+    }
+
+    if ( ref->builtin_merger == MERGE_SET )
+      sort(s, ref->type.value);
+    *new_value = s;
+    return true;
+  }
+
+  virtual bool
+  PartialMerge(const Slice& key,
+	       const Slice& left_operand,
+	       const Slice& right_operand,
+	       std::string* new_value,
+	       Logger* logger) const override
+  { std::string s = left_operand.ToString();
+    s += right_operand.ToString();
+
+    if ( ref->builtin_merger == MERGE_SET )
+      sort(s, ref->type.value);
+    *new_value = s;
+    return true;
+  }
+
+  virtual const char*
+  Name() const override
+  { return "ListMergeOperator";
+  }
+};
 
 
 		 /*******************************
@@ -644,19 +854,35 @@ static PlAtom ATOM_mode("mode");
 static PlAtom ATOM_read_only("read_only");
 static PlAtom ATOM_read_write("read_write");
 
-static void
-get_blob_type(PlTerm t, blob_type *key_type)
-{ atom_t a;
+static PlFunctor FUNCTOR_list1("list", 1);
+static PlFunctor FUNCTOR_set1("set", 1);
 
-  if ( PL_get_atom(t, &a) )
-  {      if ( ATOM_atom   == a ) *key_type = BLOB_ATOM;
-    else if ( ATOM_string == a ) *key_type = BLOB_STRING;
-    else if ( ATOM_binary == a ) *key_type = BLOB_BINARY;
-    else if ( ATOM_int32  == a ) *key_type = BLOB_INT32;
-    else if ( ATOM_int64  == a ) *key_type = BLOB_INT64;
-    else if ( ATOM_float  == a ) *key_type = BLOB_FLOAT32;
-    else if ( ATOM_double == a ) *key_type = BLOB_FLOAT64;
-    else if ( ATOM_term   == a ) *key_type = BLOB_TERM;
+static void
+get_blob_type(PlTerm t, blob_type *key_type, merger_t *m)
+{ atom_t a;
+  int rc;
+
+  if ( m && PL_is_functor(t, FUNCTOR_list1) )
+  { *m = MERGE_LIST;
+    rc = PL_get_atom(t[1], &a);
+  } else if ( m && PL_is_functor(t, FUNCTOR_set1) )
+  { *m = MERGE_SET;
+    rc = PL_get_atom(t[1], &a);
+  } else
+    rc = PL_get_atom(t, &a);
+
+  if ( rc )
+  { if ( !m || *m == MERGE_NONE )
+    {      if ( ATOM_atom   == a ) { *key_type = BLOB_ATOM;   return; }
+      else if ( ATOM_string == a ) { *key_type = BLOB_STRING; return; }
+      else if ( ATOM_binary == a ) { *key_type = BLOB_BINARY; return; }
+      else if ( ATOM_term   == a ) { *key_type = BLOB_TERM;   return; }
+    }
+
+         if ( ATOM_int32  == a ) { *key_type = BLOB_INT32;   return; }
+    else if ( ATOM_int64  == a ) { *key_type = BLOB_INT64;   return; }
+    else if ( ATOM_float  == a ) { *key_type = BLOB_FLOAT32; return; }
+    else if ( ATOM_double == a ) { *key_type = BLOB_FLOAT64; return; }
     else throw PlDomainError("rocks_type", t);
 
     return;
@@ -673,6 +899,7 @@ PREDICATE(rocks_open_, 3)
   char *fn;
   blob_type key_type   = BLOB_ATOM;
   blob_type value_type = BLOB_ATOM;
+  merger_t builtin_merger = MERGE_NONE;
   atom_t alias = NULL_ATOM;
   record_t merger = 0;
   int once = FALSE;
@@ -688,9 +915,9 @@ PREDICATE(rocks_open_, 3)
 
     if ( PL_get_name_arity(opt, &name, &arity) && arity == 1 )
     { if ( ATOM_key == name )
-	get_blob_type(opt[1], &key_type);
+	get_blob_type(opt[1], &key_type, (merger_t*)NULL);
       else if ( ATOM_value == name )
-	get_blob_type(opt[1], &value_type);
+	get_blob_type(opt[1], &value_type, &builtin_merger);
       else if ( ATOM_merge == name )
 	merger = PL_record(opt[1]);
       else if ( ATOM_alias == name )
@@ -738,10 +965,11 @@ PREDICATE(rocks_open_, 3)
 
   ref = (dbref *)PL_malloc(sizeof(*ref));
   memset(ref, 0, sizeof(*ref));
-  ref->merger = merger;
-  ref->type.key   = key_type;
-  ref->type.value = value_type;
-  ref->name = alias;
+  ref->merger         = merger;
+  ref->builtin_merger = builtin_merger;
+  ref->type.key       = key_type;
+  ref->type.value     = value_type;
+  ref->name           = alias;
   if ( once )
     ref->flags |= DB_OPEN_ONCE;
 
@@ -750,6 +978,8 @@ PREDICATE(rocks_open_, 3)
 
     if ( ref->merger )
       options.merge_operator.reset(new PrologMergeOperator(ref));
+    else if ( builtin_merger != MERGE_NONE )
+      options.merge_operator.reset(new ListMergeOperator(ref));
     if ( read_only )
       status = DB::OpenForReadOnly(options, fn, &ref->db);
     else
@@ -783,13 +1013,33 @@ PREDICATE(rocks_close, 1)
 
 PREDICATE(rocks_put, 3)
 { dbref *ref;
-  PlSlice key, value;
+  PlSlice key;
 
   get_rocks(A1, &ref);
   get_slice(A2, key,   ref->type.key);
-  get_slice(A3, value, ref->type.value);
 
-  ok(ref->db->Put(WriteOptions(), key, value));
+  if ( ref->builtin_merger == MERGE_NONE )
+  { PlSlice value;
+
+    get_slice(A3, value, ref->type.value);
+    ok(ref->db->Put(WriteOptions(), key, value));
+  } else
+  { PlTail list(A3);
+    PlTerm tmp;
+    std::string value;
+    PlSlice s;
+
+    while(list.next(tmp))
+    { get_slice(tmp, s, ref->type.value);
+      value += s.ToString();
+      s.clear();
+    }
+
+    if ( ref->builtin_merger == MERGE_SET )
+      sort(value, ref->type.value);
+
+    ok(ref->db->Put(WriteOptions(), key, value));
+  }
 
   return TRUE;
 }
@@ -799,7 +1049,7 @@ PREDICATE(rocks_merge, 3)
   PlSlice key, value;
 
   get_rocks(A1, &ref);
-  if ( !ref->merger )
+  if ( !ref->merger && ref->builtin_merger == MERGE_NONE )
     throw PlPermissionError("merge", "rocksdb", A1);
 
   get_slice(A2, key,   ref->type.key);
@@ -818,8 +1068,7 @@ PREDICATE(rocks_get, 3)
   get_rocks(A1, &ref);
   get_slice(A2, key, ref->type.key);
   return ( ok(ref->db->Get(ReadOptions(), key, &value)) &&
-	   unify(A3, value, ref->type.value)
-	 );
+           unify_value(A3, value, ref->builtin_merger, ref->type.value) );
 }
 
 PREDICATE(rocks_delete, 2)
@@ -854,7 +1103,8 @@ PREDICATE_NONDET(rocks_enum, 3)
     { PlFrame fr;
       for(; state->it->Valid(); state->it->Next())
       { if ( unify(A2, state->it->key(), state->ref->type.key) &&
-	     unify(A3, state->it->value(), state->ref->type.value) )
+	     unify_value(A3, state->it->value(),
+			 state->ref->builtin_merger, state->ref->type.value) )
 	{ state->it->Next();
 	  if ( state->it->Valid() )
 	  { if ( state == &state_buf )

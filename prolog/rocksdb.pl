@@ -3,7 +3,8 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2016, VU University Amsterdam
+    Copyright (c)  2016-2022, VU University Amsterdam
+			      SWI-Prolog Solutions b.v.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -53,6 +54,16 @@
 :- meta_predicate
 	rocks_open(+, -, :).
 
+:- predicate_options(rocks_open/3, 3,
+		     [ alias(atom),
+		       open(oneof([once])),
+		       mode(oneof([read_only,read_write])),
+		       key(oneof([atom,string,binary,int32,int64,
+				  float,double,term])),
+		       value(any),
+		       merge(callable)
+		     ]).
+
 /** <module> RocksDB interface
 
 RocksDB is an embeddable persistent key-value   store  for fast storage.
@@ -66,7 +77,7 @@ See rocks_open/3 for details.
 @see http://rocksdb.org/
 */
 
-%%	rocks_open(+Directory, -RocksDB, +Options) is det.
+%!	rocks_open(+Directory, -RocksDB, +Options) is det.
 %
 %	Open a RocksDB database in Directory   and  unify RocksDB with a
 %	handle to the opened database.  Defined options are:
@@ -116,6 +127,10 @@ See rocks_open/3 for details.
 %	      such keys should match must first normalize the key.
 %	      Normalization can be based on term_factorized/3 from
 %	      library(terms).
+%	  In addition, `value` accepts one of list(type) or set(type),
+%	  currently only for the numeric types.  This causes
+%	  rocks_put/3 and rocks_get/3 to exchange the value as a
+%	  list and installs a built-in merge function.
 %	  - merge(:Goal)
 %	  Define RocksDB value merging.  See rocks_merge/3.
 %	  - mode(+Mode)
@@ -129,22 +144,25 @@ rocks_open(Dir, DB, Options0) :-
 is_meta(merge).
 
 
-%%	rocks_close(+RocksDB) is det.
+%!	rocks_close(+RocksDB) is det.
 %
 %	Destroy the RocksDB handle.  Note   that  anonymous  handles are
 %	subject to (atom) garbage collection.
 
-%%	rocks_put(+RocksDB, +Key, +Value) is det.
+%!	rocks_put(+RocksDB, +Key, +Value) is det.
 %
 %	Add Key-Value to the RocksDB  database.   If  Key  already has a
-%	value, the existing value is silently replaced by Value.
+%	value, the existing value is silently replaced by Value.  If the
+%	value type is list(Type) or set(Type), Value must be a list. For
+%	set(Type) the list is converted into an ordered set.
 
-%%	rocks_merge(+RocksDB, +Key, +Value) is det.
+%!	rocks_merge(+RocksDB, +Key, +Value) is det.
 %
 %	Merge Value with the already existing   value  for Key. Requires
-%	the option merge(:Merger) to be used  when opening the database.
-%	Using  rocks_merge/3  rather  than    rocks_get/2,   update  and
-%	rocks_put/3  makes  the  operation  _atomic_  and  reduces  disk
+%	the option merge(:Merger) or the value type to be one of
+%	list(Type) or set(Type) to be used when opening the database.
+%	Using rocks_merge/3 rather than rocks_get/2, update and
+%	rocks_put/3 makes the operation _atomic_ and reduces disk
 %	accesses.
 %
 %	`Merger` is called as below, where two clauses are required:
@@ -185,21 +203,23 @@ is_meta(merge).
 %	@see https://github.com/facebook/rocksdb/wiki/Merge-Operator for
 %	understanding the concept of value merging in RocksDB.
 
-%%	rocks_delete(+RocksDB, +Key) is semidet.
+%!	rocks_delete(+RocksDB, +Key) is semidet.
 %
 %	Delete Key from RocksDB. Fails if Key is not in the database.
 
-%%	rocks_get(+RocksDB, +Key, -Value) is semidet.
+%!	rocks_get(+RocksDB, +Key, -Value) is semidet.
 %
 %	True when Value is the current value associated with Key in
-%	RocksDB.
+%	RocksDB.  If the value type is list(Type) or set(Type) this
+%	returns a Prolog list.
 
-%%	rocks_enum(+RocksDB, -Key, -Value) is nondet.
+%!	rocks_enum(+RocksDB, -Key, -Value) is nondet.
 %
-%	True when Value is the  current   value  associated  with Key in
-%	RocksDB. This enumerates all keys in the database.
+%	True when Value is the current value associated with Key in
+%	RocksDB. This enumerates all keys in the database. If the value
+%	type is list(Type) or set(Type) Value is a list.
 
-%%	rocks_batch(+RocksDB, +Actions:list) is det.
+%!	rocks_batch(+RocksDB, +Actions:list) is det.
 %
 %	Perform  a  batch  of  operations  on  RocksDB  as  an  _atomic_
 %	operation. Actions is a list of:

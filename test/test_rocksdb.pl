@@ -3,7 +3,8 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2016, VU University Amsterdam
+    Copyright (c)  2016-2022, VU University Amsterdam
+			      SWI-Prolog Solutions b.v.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -44,6 +45,7 @@ test_rocksdb :-
 		    terms,
 		    types,
 		    merge,
+		    builtin_merge,
                     properties
 		  ]).
 
@@ -198,6 +200,49 @@ merge(full, _Key, Initial, Additions, Result) :-
 	sort(List, Result).
 
 :- end_tests(merge).
+
+:- begin_tests(builtin_merge, [cleanup(delete_db)]).
+
+test(merge, [ Final == FinalOk,
+	    cleanup(delete_db)]) :-
+	N = 100,
+	numlist(1, N, FinalOk),
+	test_db(Dir),
+	rocks_open(Dir, DB,
+		   [ value(list(int64))
+		   ]),
+	forall(between(1, N, I),
+	       (   rocks_merge(DB, set, I),
+		   (   I mod 10 =:= 0
+		   ->  rocks_get(DB, set, Set),
+		       assertion(numlist(1, I, Set))
+		   ;   true
+		   )
+	       )),
+	rocks_get(DB, set, Final),
+	rocks_close(DB).
+test(put_set, [ Final == [3,5,7],
+		cleanup(delete_db)]) :-
+	test_db(Dir),
+	rocks_open(Dir, DB,
+		   [ value(set(int64))
+		   ]),
+	rocks_put(DB, set, [5,3,7,5]),
+	rocks_get(DB, set, Final),
+	rocks_close(DB).
+test(merge_set, [ Final == [3,5],
+		cleanup(delete_db)]) :-
+	test_db(Dir),
+	rocks_open(Dir, DB,
+		   [ value(set(int64))
+		   ]),
+	rocks_put(DB, set, [3]),
+	rocks_merge(DB, set, 5),
+	rocks_merge(DB, set, 3),
+	rocks_get(DB, set, Final),
+	rocks_close(DB).
+
+:- end_tests(builtin_merge).
 
 :- begin_tests(properties, [cleanup(delete_db)]).
 
