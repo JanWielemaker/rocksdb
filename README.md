@@ -9,6 +9,10 @@ The installation requires a recent C++   compiler. RocksDB can work with
 several compression libraries. Most  systems   have  zlib installed, but
 others may provide better  performance  or   less  resource  usage.  See
 [INSTALL.md](https://github.com/facebook/rocksdb/blob/master/INSTALL.md).
+On Ubuntu 22.04 the following packages were installed:
+
+    sudo apt install libsnappy-dev liblz4-dev libzstd-dev libgflags-dev
+
 Once these are in place, a simple
 
     ?- pack_install(rocksdb).
