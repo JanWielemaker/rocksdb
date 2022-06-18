@@ -21,7 +21,7 @@ Should do the trick. Note that this clones RocksDB and builds it the way
 we need the library. This requires   significant  disk space (1.4Gb) and
 takes long (several minutes on a modern machine).
 
-#### Why are you not using the pre-build librocksdb?
+#### Why are you not using the pre-built librocksdb?
 
 There are a  number  of  issues   with  several  pre-built  versions  of
 librocksdb:

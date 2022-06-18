@@ -13,7 +13,7 @@ all:	plugin
 rocksdb/INSTALL.md:
 	git submodule update --init rocksdb
 rocksdb/librocksdb.a: rocksdb/INSTALL.md
-	$(ROCKSENV) make -C rocksdb static_lib $(ROCKSCFLAGS)
+	$(ROCKSENV) $(MAKE) -C rocksdb static_lib $(ROCKSCFLAGS)
 
 plugin:	$(LIBROCKSDB)
 	$(MAKE) shared_object
@@ -22,7 +22,7 @@ shared_object: $(PACKSODIR)/rocksdb4pl.$(SOEXT)
 
 $(PACKSODIR)/rocksdb4pl.$(SOEXT): cpp/rocksdb4pl.cpp $(LIBROCKSDB) Makefile
 	mkdir -p $(PACKSODIR)
-	g++ $(CPPFLAGS) -shared -o $@ cpp/rocksdb4pl.cpp $(LIBROCKSDB) $(PLATFORM_LDFLAGS) $(SWISOLIB)
+	$(CXX) $(CPPFLAGS) -shared -o $@ cpp/rocksdb4pl.cpp $(LIBROCKSDB) $(PLATFORM_LDFLAGS) $(SWISOLIB)
 
 install::
 
