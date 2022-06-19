@@ -12,8 +12,12 @@ all:	plugin
 
 rocksdb/INSTALL.md:
 	git submodule update --init rocksdb
+
+# Run the build for librocksdb in parallel, using # processors as
+# limit, if using GNU make
+JOBS=$(shell $(MAKE) --version 2>/dev/null | grep GNU >/dev/null && J=$$(nproc 2>/dev/null) && echo -j$$J)
 rocksdb/librocksdb.a: rocksdb/INSTALL.md
-	$(ROCKSENV) $(MAKE) -C rocksdb static_lib $(ROCKSCFLAGS)
+	$(ROCKSENV) $(MAKE) $(JOBS) -C rocksdb static_lib $(ROCKSCFLAGS)
 
 plugin:	$(LIBROCKSDB)
 	$(MAKE) shared_object
