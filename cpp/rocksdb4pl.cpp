@@ -1081,15 +1081,83 @@ PREDICATE(rocks_delete, 2)
   return ok(ref->db->Delete(WriteOptions(), key));
 }
 
+typedef enum
+{ ENUM_ALL,
+  ENUM_FROM,
+  ENUM_PREFIX
+} enum_type;
+
 typedef struct
 { Iterator *it;
   dbref    *ref;
+  enum_type type;
+  struct
+  { size_t length;
+    char  *string;
+  } prefix;
+  int saved;
 } enum_state;
+
+static enum_state *
+save_enum_state(enum_state *state)
+{ if ( !state->saved )
+  { enum_state *copy = (enum_state*)malloc(sizeof(*state));
+    *copy = *state;
+    if ( copy->prefix.string )
+    { copy->prefix.string = (char*)malloc(copy->prefix.length+1);
+      memcpy(copy->prefix.string, state->prefix.string, copy->prefix.length+1);
+    }
+    copy->saved = TRUE;
+    return copy;
+  }
+
+  return state;
+}
+
+static void
+free_enum_state(enum_state *state)
+{ if ( state->saved )
+  { if ( state->it )
+      delete state->it;
+    if ( state->prefix.string )
+      free(state->prefix.string);
+    free(state);
+  }
+}
+
+static int
+unify_enum_key(PlTerm t, const enum_state *state)
+{ if ( state->type == ENUM_PREFIX )
+  { Slice k(state->it->key());
+
+    if ( k.size_ >= state->prefix.length &&
+	 memcmp(k.data_, state->prefix.string, state->prefix.length) == 0 )
+    { k.data_ += state->prefix.length;
+      k.size_ -= state->prefix.length;
+
+      return unify(t, k, state->ref->type.key);
+    } else
+      return FALSE;
+  } else
+  { return unify(t, state->it->key(), state->ref->type.key);
+  }
+}
+
+
+static int
+enum_key_prefix(const enum_state *state)
+{ if ( state->type == ENUM_PREFIX )
+  { Slice k(state->it->key());
+    return ( k.size_ >= state->prefix.length &&
+	     memcmp(k.data_, state->prefix.string, state->prefix.length) == 0 );
+  } else
+    return TRUE;
+}
 
 
 static foreign_t
-rocks_enum(PlTermv PL_av, int ac, control_t handle)
-{ enum_state state_buf;
+rocks_enum(PlTermv PL_av, int ac, enum_type type, control_t handle)
+{ enum_state state_buf = {0};
   enum_state *state = &state_buf;
 
   switch(PL_foreign_control(handle))
@@ -1097,51 +1165,53 @@ rocks_enum(PlTermv PL_av, int ac, control_t handle)
       get_rocks(A1, &state->ref);
       if ( ac >= 4 )
       { char *prefix;
+	size_t len;
 
-	if ( !PL_get_chars(A4, &prefix,
-			   REP_UTF8|CVT_ATOM|CVT_STRING|CVT_LIST|CVT_EXCEPTION) )
+	if ( !(state->ref->type.key == BLOB_ATOM ||
+	       state->ref->type.key == BLOB_STRING ||
+	       state->ref->type.key == BLOB_BINARY) )
+	  return PL_permission_error("enum", "rocksdb", A1);
+
+	if ( !PL_get_nchars(A4, &len, &prefix, REP_UTF8|CVT_IN|CVT_EXCEPTION) )
 	  return FALSE;
 
+	if ( type == ENUM_PREFIX )
+	{ state->prefix.length = len;
+	  state->prefix.string = prefix;
+	}
 	state->it = state->ref->db->NewIterator(ReadOptions());
 	state->it->Seek(prefix);
       } else
       { state->it = state->ref->db->NewIterator(ReadOptions());
 	state->it->SeekToFirst();
       }
+      state->type = type;
+      state->saved = FALSE;
       goto next;
     case PL_REDO:
       state = (enum_state*)PL_foreign_context_address(handle);
     next:
     { PlFrame fr;
       for(; state->it->Valid(); state->it->Next())
-      { if ( unify(A2, state->it->key(), state->ref->type.key) &&
+      { if ( unify_enum_key(A2, state) &&
 	     unify_value(A3, state->it->value(),
 			 state->ref->builtin_merger, state->ref->type.value) )
 	{ state->it->Next();
-	  if ( state->it->Valid() )
-	  { if ( state == &state_buf )
-	    { state = (enum_state*)malloc(sizeof(*state));
-	      *state = state_buf;
-	    }
-	    PL_retry_address(state);
+	  if ( state->it->Valid() && enum_key_prefix(state) )
+	  { PL_retry_address(save_enum_state(state));
 	  } else
-	  { delete state->it;
-	    if ( state != &state_buf )
-	      free(state);
+	  { free_enum_state(state);
 	    return TRUE;
 	  }
 	}
 	fr.rewind();
       }
-      delete state->it;
-      if ( state != &state_buf )
-	free(state);
+      free_enum_state(state);
       return FALSE;
     }
     case PL_PRUNED:
       state = (enum_state*)PL_foreign_context_address(handle);
-      delete state->it;
-      free(state);
+      free_enum_state(state);
       return TRUE;
     default:
       assert(0);
@@ -1151,11 +1221,15 @@ rocks_enum(PlTermv PL_av, int ac, control_t handle)
 }
 
 PREDICATE_NONDET(rocks_enum, 3)
-{ return rocks_enum(PL_av, 3, handle);
+{ return rocks_enum(PL_av, 3, ENUM_ALL, handle);
 }
 
 PREDICATE_NONDET(rocks_enum_from, 4)
-{ return rocks_enum(PL_av, 4, handle);
+{ return rocks_enum(PL_av, 4, ENUM_FROM, handle);
+}
+
+PREDICATE_NONDET(rocks_enum_prefix, 4)
+{ return rocks_enum(PL_av, 4, ENUM_PREFIX, handle);
 }
 
 static PlAtom ATOM_delete("delete");

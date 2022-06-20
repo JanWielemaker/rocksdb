@@ -45,6 +45,7 @@
 	    rocks_get/3,		% +RocksDB, +Key, -Value
 	    rocks_enum/3,		% +RocksDB, ?Key, ?Value
 	    rocks_enum_from/4,		% +RocksDB, ?Key, ?Value, +From
+	    rocks_enum_prefix/4,	% +RocksDB, ?Suffix, ?Value, +Prefix
 
             rocks_property/2            % +RocksDB, ?Property
 	  ]).
@@ -222,9 +223,10 @@ is_meta(merge).
 
 %!	rocks_enum_from(+RocksDB, -Key, -Value, +Prefix) is nondet.
 %
-%	As rocks_enum/3, but starts enumerating from Prefix.  Normally
-%	only makes sence if the key is of type `atom` or `string`.  To
-%	_only_ iterate all keys with Prefix, use
+%	As rocks_enum/3, but starts  enumerating   from  Prefix. The key
+%	type must be one of  `atom`,   `string`  or  `binary`. To _only_
+%	iterate all keys with  Prefix,   use  rocks_enum_prefix/4 or the
+%	construct below.
 %
 %	```
 %	    rocks_enum_from(DB, Key, Value, Prefix),
@@ -233,6 +235,14 @@ is_meta(merge).
 %	    ;   !, fail
 %	    )
 %	```
+
+%!	rocks_enum_prefix(+RocksDB, -Suffix, -Value, +Prefix) is nondet.
+%
+%	True for all keys that start   with Prefix. Instead of returning
+%	the full key this predicate returns the _suffix_ of the matching
+%	key. This predicate  succeeds  deterministically   no  next  key
+%	exists or the next key does not match Prefix.
+
 
 %!	rocks_batch(+RocksDB, +Actions:list) is det.
 %

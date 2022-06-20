@@ -46,7 +46,8 @@ test_rocksdb :-
 		    types,
 		    merge,
 		    builtin_merge,
-                    properties
+                    properties,
+		    enum
 		  ]).
 
 :- begin_tests(rocks, [cleanup(delete_db)]).
@@ -248,17 +249,37 @@ test(merge_set, [ Final == [3,5],
 
 test(basic) :-
 	test_db(Dir),
-	rocks_open(Dir, RocksDB,
+	rocks_open(Dir, DB,
 		   [ key(term),
 		     value(term)
 		   ]),
-	rocks_put(RocksDB, aap, noot(mies)),
-	rocks_put(RocksDB, aap(1), noot(1)),
-	rocks_property(RocksDB, estimate_num_keys(Num)),
-        assertion(integer(Num)).
+	rocks_put(DB, aap, noot(mies)),
+	rocks_put(DB, aap(1), noot(1)),
+	rocks_property(DB, estimate_num_keys(Num)),
+        assertion(integer(Num)),
+	rocks_close(DB).
 
 :- end_tests(properties).
 
+:- begin_tests(enum, [cleanup(delete_db)]).
+
+test(enum,
+     [ Keys = ["aap", "aapje", "noot"],
+       cleanup(delete_db)
+     ]) :-
+	test_db(Dir),
+	rocks_open(Dir, RocksDB,
+		   [ key(string),
+		     value(term)
+		   ]),
+	rocks_put(RocksDB, aap, 1),
+	rocks_put(RocksDB, aapje, 2),
+	rocks_put(RocksDB, noot, 3),
+	findall(Key, rocks_enum_from(RocksDB, Key, _, aap), Keys),
+	rocks_enum_prefix(RocksDB, Rest, _, aapj),
+	assertion(Rest == "e").
+
+:- end_tests(enum).
 
 		 /*******************************
 		 *	       UTIL		*
