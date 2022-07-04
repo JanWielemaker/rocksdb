@@ -139,6 +139,13 @@ See rocks_open/3 for details.
 %	  One of `read_write` (default) or `read_only`.  The latter
 %	  uses OpenForReadOnly() to open the database.
 
+%
+% @bug You must call rocks_close(Directory) to ensure clean shutdown
+%      Failure to call rdb_close/1 usually doesn't result in data
+%      loss because rocksdb can recover, depending on the setting
+%      of the `sync` option.
+% @see https://github.com/facebook/rocksdb/wiki/Known-Issues
+
 rocks_open(Dir, DB, Options0) :-
 	meta_options(is_meta, Options0, Options),
 	rocks_open_(Dir, DB, Options).

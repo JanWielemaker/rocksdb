@@ -82,6 +82,7 @@ test(batch, Pairs == [zus-noot]) :-
 	rocks_get(RocksDB, aap, Value),
 	rocks_batch(RocksDB,
 		    [ delete(aap),
+		      delete(xxxx), % doesn't exist, but that's OK
 		      put(zus, Value)
 		    ]),
 	findall(K-V, rocks_enum(RocksDB, K, V), Pairs),

@@ -121,11 +121,11 @@ rocks_get_alias(atom_t name)
 
 static void
 rocks_alias(atom_t name, atom_t symbol)
-{ unsigned int key = atom_hash(name);
+{ auto key = atom_hash(name);
 
   alias_lock.lock();
   if ( !rocks_get_alias(name) )
-  { alias_cell *c = (alias_cell *)malloc(sizeof(*c));
+  { alias_cell *c = static_cast<alias_cell *>(malloc(sizeof *c));
 
     c->name   = name;
     c->symbol = symbol;
@@ -142,7 +142,7 @@ rocks_alias(atom_t name, atom_t symbol)
 
 static void
 rocks_unalias(atom_t name)
-{ unsigned int key = atom_hash(name);
+{ auto key = atom_hash(name);
   alias_cell *c, *prev=NULL;
 
   alias_lock.lock();
@@ -169,8 +169,8 @@ rocks_unalias(atom_t name)
 
 static int
 write_rocks_ref(IOSTREAM *s, atom_t eref, int flags)
-{ dbref **refp = (dbref **)PL_blob_data(eref, NULL, NULL);
-  dbref *ref = *refp;
+{ auto refp = static_cast<dbref **>(PL_blob_data(eref, NULL, NULL));
+  auto ref  = *refp;
   (void)flags;
 
   Sfprintf(s, "<rocksdb>(%p)", ref);
@@ -184,15 +184,16 @@ GC an rocks from the atom garbage collector.
 
 static int
 release_rocks_ref(atom_t aref)
-{ dbref **refp = (dbref **)PL_blob_data(aref, NULL, NULL);
-  dbref *ref   = *refp;
-  rocksdb::DB *db;
+{ auto refp = static_cast<dbref **>(PL_blob_data(aref, NULL, NULL));
+  auto ref  = *refp;
 
   assert(ref->name == NULL_ATOM);
 
-  if ( (db=ref->db) )
-  { ref->db = NULL;
-    delete db;
+  { auto db=ref->db;
+    if ( db )
+    { ref->db = NULL;
+      delete db;
+    }
   }
   if ( ref->merger )
   { PL_erase(ref->merger);
@@ -206,8 +207,8 @@ release_rocks_ref(atom_t aref)
 
 static int
 save_rocks(atom_t aref, IOSTREAM *fd)
-{ dbref **refp = (dbref **)PL_blob_data(aref, NULL, NULL);
-  dbref *ref   = *refp;
+{ auto refp = static_cast<dbref **>(PL_blob_data(aref, NULL, NULL));
+  auto ref  = *refp;
   (void)fd;
 
   return PL_warning("Cannot save reference to <rocksdb>(%p)", ref);
@@ -225,7 +226,7 @@ load_rocks(IOSTREAM *fd)
 static PL_blob_t rocks_blob =
 { PL_BLOB_MAGIC,
   PL_BLOB_UNIQUE,
-  (char*)"rocksdb",
+  (const char *)"rocksdb",
   release_rocks_ref,
   NULL,
   write_rocks_ref,
@@ -241,7 +242,7 @@ unify_rocks(term_t t, dbref *ref)
   { if ( !ref->symbol )
     { PlTerm tmp;
 
-      if ( PL_unify_blob(tmp, &ref, sizeof(ref), &rocks_blob) &&
+      if ( PL_unify_blob(tmp, &ref, sizeof ref, &rocks_blob) &&
 	   PL_get_atom(tmp, &ref->symbol) )
       { rocks_alias(ref->name, ref->symbol);
       } else
@@ -252,7 +253,7 @@ unify_rocks(term_t t, dbref *ref)
   } else if ( ref->symbol )
   { return PL_unify_atom(t, ref->symbol);
   } else
-  { return ( PL_unify_blob(t, &ref, sizeof(ref), &rocks_blob) &&
+  { return ( PL_unify_blob(t, &ref, sizeof ref, &rocks_blob) &&
 	     PL_get_atom(t, &ref->symbol)
 	   );
   }
@@ -266,11 +267,11 @@ symbol_dbref(atom_t symbol)
   PL_blob_t *type;
 
   if ( (data=PL_blob_data(symbol, &len, &type)) && type == &rocks_blob )
-  { dbref **erd = (dbref **)data;
+  { auto erd = static_cast<dbref **>(data);
     return *erd;
   }
 
-  return (dbref*)NULL;
+  return static_cast<dbref *>(NULL);
 }
 
 
@@ -335,15 +336,15 @@ class PlSlice : public Slice
 public:
   int must_free = 0;
   union
-  { int i32;
+  { int     i32; // int32_t
     int64_t i64;
-    float f32;
-    double f64;
+    float   f32;
+    double  f64;
   } v;
 
   void clear()
   { if ( must_free )
-      PL_erase_external((char*)data_);
+      PL_erase_external(const_cast<char *>(data_));
     must_free = 0;
     data_ = NULL;
     size_ = 0;
@@ -351,7 +352,7 @@ public:
 
   ~PlSlice()
   { if ( must_free )
-      PL_erase_external((char*)data_);
+      PL_erase_external(const_cast<char *>(data_));
   }
 };
 
@@ -381,16 +382,16 @@ get_slice(term_t t, PlSlice &s, blob_type type)
       throw(PlException(PL_exception(0)));
     case BLOB_INT32:
     { if ( PL_get_integer_ex(t, &s.v.i32) )
-      { s.data_ = (char*)&s.v.i32;
-	s.size_ = sizeof(s.v.i32);
+      { s.data_ = reinterpret_cast<const char *>(&s.v.i32);
+	s.size_ = sizeof s.v.i32;
 	return;
       }
       throw(PlException(PL_exception(0)));
     }
     case BLOB_INT64:
     { if ( PL_get_int64_ex(t, &s.v.i64) )
-      { s.data_ = (char*)&s.v.i64;
-	s.size_ = sizeof(s.v.i64);
+      { s.data_ = reinterpret_cast<const char *>(&s.v.i64);
+	s.size_ = sizeof s.v.i64;
 	return;
       }
       throw(PlException(PL_exception(0)));
@@ -399,17 +400,17 @@ get_slice(term_t t, PlSlice &s, blob_type type)
     { double d;
 
       if ( PL_get_float_ex(t, &d) )
-      { s.v.f32 = (float)d;
-	s.data_ = (char*)&s.v.f32;
-	s.size_ = sizeof(s.v.f32);
+      { s.v.f32 = d;
+	s.data_ = reinterpret_cast<const char *>(&s.v.f32);
+	s.size_ = sizeof s.v.f32 ;
 	return;
       }
       throw(PlException(PL_exception(0)));
     }
     case BLOB_FLOAT64:
     { if ( PL_get_float_ex(t, &s.v.f64) )
-      { s.data_ = (char*)&s.v.f64;
-	s.size_ = sizeof(s.v.f64);
+      { s.data_ = reinterpret_cast<const char*>(&s.v.f64);
+	s.size_ = sizeof s.v.f64;
 	return;
       }
       throw(PlException(PL_exception(0)));
@@ -443,25 +444,25 @@ unify(term_t t, const Slice &s, blob_type type)
     case BLOB_INT32:
     { int i;
 
-      memcpy(&i, s.data_, sizeof(i));
+      memcpy(&i, s.data_, sizeof i); // Unaligned i=*reinterpret_cast<int>(s.data_)
       return PL_unify_integer(t, i);
     }
     case BLOB_INT64:
     { int64_t i;
 
-      memcpy(&i, s.data_, sizeof(i));
+      memcpy(&i, s.data_, sizeof i);
       return PL_unify_int64(t, i);
     }
     case BLOB_FLOAT32:
     { float f;
 
-      memcpy(&f, s.data_, sizeof(f));
+      memcpy(&f, s.data_, sizeof f);
       return PL_unify_float(t, f);
     }
     case BLOB_FLOAT64:
     { double f;
 
-      memcpy(&f, s.data_, sizeof(f));
+      memcpy(&f, s.data_, sizeof f);
       return PL_unify_float(t, f);
     }
     case BLOB_TERM:
@@ -479,7 +480,7 @@ unify(term_t t, const Slice &s, blob_type type)
 
 static int
 unify(term_t t, const Slice *s, blob_type type)
-{ if ( s == (Slice*)NULL )
+{ if ( s == static_cast<const Slice *>(NULL) )
   { switch(type)
     { case BLOB_ATOM:
 	return PL_unify_atom(t, ATOM_.handle);
@@ -496,7 +497,7 @@ unify(term_t t, const Slice *s, blob_type type)
 	return PL_unify_nil(t);
       default:
 	assert(0);
-        return FALSE;
+	return FALSE;
     }
   }
 
@@ -525,33 +526,33 @@ unify_value(term_t t, const Slice &s, merger_t merge, blob_type type)
     { switch( type )
       { case BLOB_INT32:
 	{ int i;
-	  memcpy(&i, data, sizeof(i));
-	  data += sizeof(i);
+	  memcpy(&i, data, sizeof i);
+	  data += sizeof i;
 	  rc = PL_put_integer(tmp, i);
 	  break;
 	}
-        case BLOB_INT64:
+	case BLOB_INT64:
 	{ int64_t i;
-	  memcpy(&i, data, sizeof(i));
-	  data += sizeof(i);
+	  memcpy(&i, data, sizeof i);
+	  data += sizeof i;
 	  rc = PL_put_int64(tmp, i);
 	  break;
 	}
-        case BLOB_FLOAT32:
+	case BLOB_FLOAT32:
 	{ float i;
-	  memcpy(&i, data, sizeof(i));
-	  data += sizeof(i);
+	  memcpy(&i, data, sizeof i);
+	  data += sizeof i;
 	  rc = PL_put_float(tmp, i);
 	  break;
 	}
-        case BLOB_FLOAT64:
+	case BLOB_FLOAT64:
 	{ double i;
-	  memcpy(&i, data, sizeof(i));
-	  data += sizeof(i);
+	  memcpy(&i, data, sizeof i);
+	  data += sizeof i;
 	  rc = PL_put_float(tmp, i);
 	  break;
 	}
-        default:
+	default:
 	  assert(0);
 	  rc = FALSE;
       }
@@ -583,7 +584,7 @@ static int
 log_exception(Logger* logger)
 { PlException ex(PL_exception(0));
 
-  Log(logger, "%s", (char*)ex);
+  Log(logger, "%s", static_cast<const char *>(ex));
   return false;
 }
 
@@ -631,7 +632,7 @@ call_merger(const dbref *ref, PlTermv av, std::string* new_value,
       return false;
     }
   } catch(PlException &ex)
-  { Log(logger, "%s", (char*)ex);
+  { Log(logger, "%s", static_cast<const char *>(ex));
     return false;
   }
 }
@@ -698,8 +699,8 @@ public:
 
 static int
 cmp_int32(const void *v1, const void *v2)
-{ int *i1 = (int*)v1;
-  int *i2 = (int*)v2;
+{ auto i1 = static_cast<const int *>(v1);
+  auto i2 = static_cast<const int *>(v2);
 
   return *i1 > *i2 ? 1 : *i1 < *i2 ? -1 : 0;
 }
@@ -707,16 +708,15 @@ cmp_int32(const void *v1, const void *v2)
 
 void
 sort(std::string &str, blob_type type)
-{ char *s = (char*)str.c_str();
-  size_t len = str.length();
-  size_t ulen;
+{ auto s = const_cast<char *>(str.c_str());
+  auto len = str.length();
 
   if ( len > 0 )
   { switch(type)
     { case BLOB_INT32:
-      { int *ip = (int*)s;
-	int *op = ip+1;
-	int *ep = (int*)(s+len);
+      { auto ip = reinterpret_cast<int *>(s);
+	auto op = ip+1;
+	auto ep = reinterpret_cast<int *>(s+len);
 	int cv;
 
 	qsort(s, len/sizeof(int), sizeof(int), cmp_int32);
@@ -725,13 +725,13 @@ sort(std::string &str, blob_type type)
 	{ if ( *ip != cv )
 	    *op++ = cv = *ip;
 	}
-	str.resize((char*)op-s);
+	str.resize(reinterpret_cast<char *>(op)-s);
 	break;
       }
       case BLOB_INT64:
-      { int64_t *ip = (int64_t*)s;
-	int64_t *op = ip+1;
-	int64_t *ep = (int64_t*)(s+len);
+      { auto ip = reinterpret_cast<int64_t *>(s);
+	auto op = ip+1;
+        auto ep = reinterpret_cast<int64_t *>(s+len);
 	int64_t cv;
 
 	qsort(s, len/sizeof(int64_t), sizeof(int64_t), cmp_int32);
@@ -740,13 +740,13 @@ sort(std::string &str, blob_type type)
 	{ if ( *ip != cv )
 	    *op++ = cv = *ip;
 	}
-	str.resize((char*)op-s);
+	str.resize(reinterpret_cast<char *>(op)-s);
 	break;
       }
       case BLOB_FLOAT32:
-      { float *ip = (float*)s;
-	float *op = ip+1;
-	float *ep = (float*)(s+len);
+      { auto ip = reinterpret_cast<float *>(s);
+	auto op = ip+1;
+	auto ep = reinterpret_cast<float *>(s+len);
 	float cv;
 
 	qsort(s, len/sizeof(float), sizeof(float), cmp_int32);
@@ -755,13 +755,13 @@ sort(std::string &str, blob_type type)
 	{ if ( *ip != cv )
 	    *op++ = cv = *ip;
 	}
-	str.resize((char*)op-s);
+	str.resize(reinterpret_cast<char *>(op)-s);
 	break;
       }
       case BLOB_FLOAT64:
-      { double *ip = (double*)s;
-	double *op = ip+1;
-	double *ep = (double*)(s+len);
+      { auto ip = reinterpret_cast<double *>(s);
+	auto op = ip+1;
+	auto ep = reinterpret_cast<double *>(s+len);
 	double cv;
 
 	qsort(s, len/sizeof(double), sizeof(double), cmp_int32);
@@ -770,7 +770,7 @@ sort(std::string &str, blob_type type)
 	{ if ( *ip != cv )
 	    *op++ = cv = *ip;
 	}
-	str.resize((char*)op-s);
+	str.resize(reinterpret_cast<char *>(op)-s);
 	break;
       }
       default:
@@ -893,8 +893,7 @@ get_blob_type(PlTerm t, blob_type *key_type, merger_t *m)
 
 
 PREDICATE(rocks_open_, 3)
-{ dbref *ref;
-  rocksdb::Options options;
+{ rocksdb::Options options;
   options.create_if_missing = true;
   char *fn;
   blob_type key_type   = BLOB_ATOM;
@@ -915,7 +914,7 @@ PREDICATE(rocks_open_, 3)
 
     if ( PL_get_name_arity(opt, &name, &arity) && arity == 1 )
     { if ( ATOM_key == name )
-	get_blob_type(opt[1], &key_type, (merger_t*)NULL);
+	get_blob_type(opt[1], &key_type, static_cast<merger_t *>(NULL));
       else if ( ATOM_value == name )
 	get_blob_type(opt[1], &value_type, &builtin_merger);
       else if ( ATOM_merge == name )
@@ -946,7 +945,7 @@ PREDICATE(rocks_open_, 3)
 	}
 
 	PlTypeError("atom", opt[1]);
-      }
+	}
     } else
       PlTypeError("option", opt);
   }
@@ -963,8 +962,8 @@ PREDICATE(rocks_open_, 3)
     }
   }
 
-  ref = (dbref *)PL_malloc(sizeof(*ref));
-  memset(ref, 0, sizeof(*ref));
+  dbref *ref = static_cast<dbref *>(PL_malloc(sizeof *ref));
+  memset(ref, 0, sizeof *ref);
   ref->merger         = merger;
   ref->builtin_merger = builtin_merger;
   ref->type.key       = key_type;
@@ -1101,10 +1100,10 @@ typedef struct
 static enum_state *
 save_enum_state(enum_state *state)
 { if ( !state->saved )
-  { enum_state *copy = (enum_state*)malloc(sizeof(*state));
+  { auto copy = static_cast<enum_state *>(malloc(sizeof (enum_state)));
     *copy = *state;
     if ( copy->prefix.string )
-    { copy->prefix.string = (char*)malloc(copy->prefix.length+1);
+    { copy->prefix.string = static_cast<char *>(malloc(copy->prefix.length+1));
       memcpy(copy->prefix.string, state->prefix.string, copy->prefix.length+1);
     }
     copy->saved = TRUE;
@@ -1189,7 +1188,7 @@ rocks_enum(PlTermv PL_av, int ac, enum_type type, control_t handle)
       state->saved = FALSE;
       goto next;
     case PL_REDO:
-      state = (enum_state*)PL_foreign_context_address(handle);
+      state = static_cast<enum_state *>(PL_foreign_context_address(handle));
     next:
     { PlFrame fr;
       for(; state->it->Valid(); state->it->Next())
@@ -1210,7 +1209,7 @@ rocks_enum(PlTermv PL_av, int ac, enum_type type, control_t handle)
       return FALSE;
     }
     case PL_PRUNED:
-      state = (enum_state*)PL_foreign_context_address(handle);
+      state = static_cast<enum_state *>(PL_foreign_context_address(handle));
       free_enum_state(state);
       return TRUE;
     default:

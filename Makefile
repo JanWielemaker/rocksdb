@@ -10,13 +10,15 @@ PLPATHS=-p library=prolog -p foreign="$(PACKSODIR)"
 
 all:	plugin
 
-rocksdb/INSTALL.md:
+.PHONY: FORCE all clean install check distclean realclean shared_object plugin
+
+rocksdb/INSTALL.md: FORCE
 	git submodule update --init rocksdb
 
 # Run the build for librocksdb in parallel, using # processors as
 # limit, if using GNU make
 JOBS=$(shell $(MAKE) --version 2>/dev/null | grep GNU >/dev/null && J=$$(nproc 2>/dev/null) && echo -j$$J)
-rocksdb/librocksdb.a: rocksdb/INSTALL.md
+rocksdb/librocksdb.a: rocksdb/INSTALL.md FORCE
 	$(ROCKSENV) $(MAKE) $(JOBS) -C rocksdb static_lib $(ROCKSCFLAGS)
 
 plugin:	$(LIBROCKSDB)
