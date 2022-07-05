@@ -115,7 +115,7 @@
                        advise_random_on_open(boolean),
                        db_write_buffer_size(integer),
                        write_buffer_manager(boolean),
-                       new_table_reader_for_compaction_inputs(boolean),
+                       % new_table_reader_for_compaction_inputs(boolean),  % TODO: removed from rocksdb/options.h?
                        compaction_readahead_size(integer),
                        random_access_max_buffer_size(integer),
                        writable_file_max_buffer_size(integer),
@@ -140,7 +140,7 @@
                        avoid_flush_during_recovery(boolean),
                        avoid_flush_during_shutdown(boolean),
                        allow_ingest_behind(boolean),
-                       preserve_deletes(boolean),
+                       % preserve_deletes(boolean), % TODO: removed from rocksdb/options.h?
                        two_write_queues(boolean),
                        manual_wal_flush(boolean),
                        atomic_flush(boolean),
@@ -166,7 +166,7 @@
                       pin_data(boolean),
                       background_purge_on_iterator_cleanup(boolean),
                       ignore_range_deletions(boolean),
-                      iter_start_seqnum(integer),
+                      % iter_start_seqnum(integer), % TODO: removed from rocksdb/options.h?
                       io_timeout(integer),
                       value_size_soft_limit(integer)
                      ]).

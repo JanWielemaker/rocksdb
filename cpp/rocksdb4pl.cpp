@@ -931,8 +931,9 @@ static ReadOptdef read_optdefs[] =
   {         "ignore_range_deletions",               RD_ODEF {
     options->ignore_range_deletions               = static_cast<bool>(arg); } },
   // "table_filter" std::function<bool(const TableProperties&)>
-  {         "iter_start_seqnum",                    RD_ODEF {
-    options->iter_start_seqnum                    = static_cast<SequenceNumber>(arg); } },
+  // TODO: "iter_start_seqnum" removed from rocksdb/options.h?
+  // {         "iter_start_seqnum",                    RD_ODEF {
+  //   options->iter_start_seqnum                    = static_cast<SequenceNumber>(arg); } },
   //         "timestamp" Slice*
   // "iter_start_ts" Slice*
   {
@@ -1124,8 +1125,9 @@ static Optdef optdefs[] =
     options->db_write_buffer_size                    = static_cast<size_t>(arg); } },
   // "write_buffer_manager" - shared_ptr<WriteBufferManager>
   // "access_hint_on_compaction_start" - enum AccessHint
-  {         "new_table_reader_for_compaction_inputs",  ODEF {
-    options->new_table_reader_for_compaction_inputs  = static_cast<bool>(arg); } },
+  // TODO: "new_table_reader_for_compaction_inputs"  removed from rocksdb/options.h?
+  // {         "new_table_reader_for_compaction_inputs",  ODEF {
+  //   options->new_table_reader_for_compaction_inputs  = static_cast<bool>(arg); } },
   {         "compaction_readahead_size",               ODEF {
     options->compaction_readahead_size               = static_cast<size_t>(arg); } },
   {         "random_access_max_buffer_size",           ODEF {
@@ -1178,8 +1180,9 @@ static Optdef optdefs[] =
     options->avoid_flush_during_shutdown             = static_cast<bool>(arg); } },
   {         "allow_ingest_behind",                     ODEF {
     options->allow_ingest_behind                     = static_cast<bool>(arg); } },
-  {         "preserve_deletes",                        ODEF {
-    options->preserve_deletes                        = static_cast<bool>(arg); } },
+  // TODO: "preserve_deletes" removed from rocksdb/options.h?
+  // {         "preserve_deletes",                        ODEF {
+  //   options->preserve_deletes                        = static_cast<bool>(arg); } },
   {         "two_write_queues",                        ODEF {
     options->two_write_queues                        = static_cast<bool>(arg); } },
   {         "manual_wal_flush",                        ODEF {
