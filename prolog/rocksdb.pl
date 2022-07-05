@@ -38,14 +38,22 @@
 	    rocks_close/1,		% +RocksDB
 
 	    rocks_put/3,		% +RocksDB, +Key, +Value
+	    rocks_put/4,		% +RocksDB, +Key, +Value, +Options
 	    rocks_merge/3,		% +RocksDB, +Key, +Value
+	    rocks_merge/4,		% +RocksDB, +Key, +Value, +Options
 	    rocks_delete/2,		% +RocksDB, +Key
+	    rocks_delete/3,		% +RocksDB, +Key, +Options
 	    rocks_batch/2,		% +RocksDB, +Actions
+	    rocks_batch/3,		% +RocksDB, +Actions, +Options
 
 	    rocks_get/3,		% +RocksDB, +Key, -Value
+	    rocks_get/4,		% +RocksDB, +Key, -Value, +Options
 	    rocks_enum/3,		% +RocksDB, ?Key, ?Value
+	    rocks_enum/4,		% +RocksDB, ?Key, ?Value, +Options
 	    rocks_enum_from/4,		% +RocksDB, ?Key, ?Value, +From
+	    rocks_enum_from/5,		% +RocksDB, ?Key, ?Value, +From, +Options
 	    rocks_enum_prefix/4,	% +RocksDB, ?Suffix, ?Value, +Prefix
+	    rocks_enum_prefix/5,	% +RocksDB, ?Suffix, ?Value, +Prefix, +Options
 
             rocks_property/2            % +RocksDB, ?Property
 	  ]).
@@ -63,8 +71,131 @@
 		       key(oneof([atom,string,binary,int32,int64,
 				  float,double,term])),
 		       value(any),
-		       merge(callable)
+		       merge(callable),
+                       prepare_for_bulk_load(oneof([true])),
+                       optimize_for_small_db(oneof([true])),
+                       increase_parallelism(oneof([true])),
+                       create_if_missing(boolean),
+                       create_missing_column_families(boolean),
+                       error_if_exists(boolean),
+                       paranoid_checks(boolean),
+                       track_and_verify_wals_in_manifest(boolean),
+                       % info_log, % TODO: callback for logging
+                       info_log_level(oneof([debug,info,warn,error,fatal,header])),
+                       env(boolean),
+                       max_open_files(integer),
+                       max_file_opening_threads(integer),
+                       max_total_wal_size(integer),
+                       statistics(boolean),
+                       use_fsync(boolean),
+                       db_log_dir(string),
+                       wal_dir(string),
+                       delete_obsolete_files_period_micros(integer),
+                       max_background_jobs(integer),
+                       max_subcompactions(integer),
+                       max_log_file_size(integer),
+                       log_file_time_to_roll(integer),
+                       keep_log_file_num(integer),
+                       recycle_log_file_num(integer),
+                       max_manifest_file_size(integer),
+                       table_cache_numshardbits(integer),
+                       wal_ttl_seconds(integer),
+                       wal_size_limit_mb(integer),
+                       manifest_preallocation_size(integer),
+                       allow_mmap_reads(boolean),
+                       allow_mmap_writes(boolean),
+                       use_direct_reads(boolean),
+                       use_direct_io_for_flush_and_compaction(boolean),
+                       allow_fallocate(boolean),
+                       is_fd_close_on_exec(boolean),
+                       stats_dump_period_sec(integer),
+                       stats_persist_period_sec(integer),
+                       persist_stats_to_disk(boolean),
+                       stats_history_buffer_size(integer),
+                       advise_random_on_open(boolean),
+                       db_write_buffer_size(integer),
+                       write_buffer_manager(boolean),
+                       new_table_reader_for_compaction_inputs(boolean),
+                       compaction_readahead_size(integer),
+                       random_access_max_buffer_size(integer),
+                       writable_file_max_buffer_size(integer),
+                       use_adaptive_mutex(boolean),
+                       bytes_per_sync(integer),
+                       wal_bytes_per_sync(integer),
+                       strict_bytes_per_sync(integer),
+                       enable_thread_tracking(boolean),
+                       delayed_write_rate(integer),
+                       enable_pipelined_write(boolean),
+                       unordered_write(boolean),
+                       allow_concurrent_memtable_write(boolean),
+                       enable_write_thread_adaptive_yield(boolean),
+                       max_write_batch_group_size_bytes(integer),
+                       write_thread_max_yield_usec(integer),
+                       write_thread_slow_yield_usec(integer),
+                       skip_stats_update_on_db_open(boolean),
+                       skip_checking_sst_file_sizes_on_db_open(boolean),
+                       allow_2pc(boolean),
+                       fail_ifoptions_file_error(boolean),
+                       dump_malloc_stats(boolean),
+                       avoid_flush_during_recovery(boolean),
+                       avoid_flush_during_shutdown(boolean),
+                       allow_ingest_behind(boolean),
+                       preserve_deletes(boolean),
+                       two_write_queues(boolean),
+                       manual_wal_flush(boolean),
+                       atomic_flush(boolean),
+                       avoid_unnecessary_blocking_io(boolean),
+                       write_dbid_to_manifest(boolean),
+                       log_readahead_size(boolean),
+                       best_efforts_recovery(boolean),
+                       max_bgerror_resume_count(integer),
+                       bgerror_resume_retry_interval(integer),
+                       allow_data_in_errors(boolean),
+                       db_host_id(string)
 		     ]).
+:- predicate_options(rocks_get/4, 4,
+                     [
+                      readahead_size(integer),
+                      max_skippable_internal_keys(integer),
+                      verify_checksums(boolean),
+                      fill_cache(boolean),
+                      tailing(boolean),
+                      total_order_seek(boolean),
+                      auto_prefix_mode(boolean),
+                      prefix_same_as_start(boolean),
+                      pin_data(boolean),
+                      background_purge_on_iterator_cleanup(boolean),
+                      ignore_range_deletions(boolean),
+                      iter_start_seqnum(integer),
+                      io_timeout(integer),
+                      value_size_soft_limit(integer)
+                     ]).
+:- predicate_options(rocks_enum/4, 4,
+                     [ pass_to(rocks_get/4, 4)
+                     ]).
+:- predicate_options(rocks_enum_from/5, 5,
+                     [ pass_to(rocks_get/4, 4)
+                     ]).
+:- predicate_options(rocks_enum_prefix/5, 5,
+                     [ pass_to(rocks_get/4, 4)
+                     ]).
+:- predicate_options(rocks_put/4, 4,
+                     [ sync(boolean),
+                       disableWAL(boolean),
+                       ignore_missing_column_families(boolean),
+                       no_slowdown(boolean),
+                       low_pri(boolean),
+                       memtable_insert_hint_per_batch(boolean)
+                     ]).
+:- predicate_options(rocks_delete/3, 3,
+                     [ pass_to(rocks_put/4, 4)
+                     ]).
+:- predicate_options(rocks_merge/4, 4,
+                     [ pass_to(rocks_put/4, 4)
+                     ]).
+:- predicate_options(rocks_batch/4, 4,
+                     [ pass_to(rocks_put/4, 4)
+                     ]).
 
 /** <module> RocksDB interface
 
@@ -81,8 +212,10 @@ See rocks_open/3 for details.
 
 %!	rocks_open(+Directory, -RocksDB, +Options) is det.
 %
-%	Open a RocksDB database in Directory   and  unify RocksDB with a
-%	handle to the opened database.  Defined options are:
+%	Open a RocksDB database in Directory and unify RocksDB with a
+%	handle to the opened database.  Most of the `DBOptions` in
+%	`rocksdb/include/rocksdb/options.h` are supported, in addition
+%	to the following options:
 %
 %	  - alias(+Name)
 %	  Give the database a name instead of using an anonymous
@@ -138,6 +271,13 @@ See rocks_open/3 for details.
 %	  - mode(+Mode)
 %	  One of `read_write` (default) or `read_only`.  The latter
 %	  uses OpenForReadOnly() to open the database.
+%	  - optimize_for_small_db(true) - Use this if your DB is very
+%           small (like under 1GB) and you don't want tog
+%           spend lots of memory for memtables.
+%         - increase_parallelism(true) - see DBOptions::IncreaseParallelism()
+% @see https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide
+% @see https://github.com/EighteenZi/rocksdb_wiki/blob/master/RocksDB-Tuning-Guide.md
+% @see http://rocksdb.org/blog/2018/08/01/rocksdb-tuning-advisor.html
 
 %
 % @bug You must call rocks_close(Directory) to ensure clean shutdown
@@ -159,13 +299,18 @@ is_meta(merge).
 %	subject to (atom) garbage collection.
 
 %!	rocks_put(+RocksDB, +Key, +Value) is det.
+%!      rocks_put(+RocksDB, +Key, +Value, Options) is det.
 %
 %	Add Key-Value to the RocksDB  database.   If  Key  already has a
 %	value, the existing value is silently replaced by Value.  If the
 %	value type is list(Type) or set(Type), Value must be a list. For
 %	set(Type) the list is converted into an ordered set.
 
+rocks_put(RocksDB, Key, Value) :-
+    rocks_put(RocksDB, Key, Value, []).
+
 %!	rocks_merge(+RocksDB, +Key, +Value) is det.
+%!	rocks_merge(+RocksDB, +Key, +Value, +Options) is det.
 %
 %	Merge Value with the already existing   value  for Key. Requires
 %	the option merge(:Merger) or the value type to be one of
@@ -173,6 +318,8 @@ is_meta(merge).
 %	Using rocks_merge/3 rather than rocks_get/2, update and
 %	rocks_put/3 makes the operation _atomic_ and reduces disk
 %	accesses.
+%
+%       Options are the same as for rocks_put/4.
 %
 %	`Merger` is called as below, where two clauses are required:
 %	one with `How` set to `partial` and one with `How` set to
@@ -212,28 +359,50 @@ is_meta(merge).
 %	@see https://github.com/facebook/rocksdb/wiki/Merge-Operator for
 %	understanding the concept of value merging in RocksDB.
 
+rocks_merge(RocksDB, Key, Value) :-
+    rocks_merge(RocksDB, Key, Value, []).
+
 %!	rocks_delete(+RocksDB, +Key) is semidet.
+%!	rocks_delete(+RocksDB, +Key, +Options) is semidet.
 %
 %	Delete Key from RocksDB. Fails if Key is not in the database.
+%
+%       Options are the same as for rocks_put/4.
+
+rocks_delete(RocksDB, Key) :-
+    rocks_delete(RocksDB, Key, []).
 
 %!	rocks_get(+RocksDB, +Key, -Value) is semidet.
+%!      rocks_get(+RocksDB, +Key, -Value, +Options) is semidet.
 %
 %	True when Value is the current value associated with Key in
 %	RocksDB.  If the value type is list(Type) or set(Type) this
 %	returns a Prolog list.
 
+rocks_get(RocksDB, Key, Value) :-
+    rocks_get(RocksDB, Key, Value, []).
+
 %!	rocks_enum(+RocksDB, -Key, -Value) is nondet.
+%!	rocks_enum(+RocksDB, -Key, -Value, +Options) is nondet.
 %
 %	True when Value is the current value associated with Key in
 %	RocksDB. This enumerates all keys in the database. If the value
 %	type is list(Type) or set(Type) Value is a list.
+%
+%       Options are the same as for rocks_get/4.
+
+rocks_enum(RocksDB, Key, Value) :-
+    rocks_enum(RocksDB, Key, Value, []).
 
 %!	rocks_enum_from(+RocksDB, -Key, -Value, +Prefix) is nondet.
+%!	rocks_enum_from(+RocksDB, -Key, -Value, +Prefix, +Options) is nondet.
 %
 %	As rocks_enum/3, but starts  enumerating   from  Prefix. The key
 %	type must be one of  `atom`,   `string`  or  `binary`. To _only_
 %	iterate all keys with  Prefix,   use  rocks_enum_prefix/4 or the
 %	construct below.
+%
+%       Options are the same as for rocks_get/4.
 %
 %	```
 %	    rocks_enum_from(DB, Key, Value, Prefix),
@@ -243,18 +412,32 @@ is_meta(merge).
 %	    )
 %	```
 
+rocks_enum_from(RocksDB, Key, Value, Prefix) :-
+    rocks_enum_from(RocksDB, Key, Value, Prefix, []).
+
 %!	rocks_enum_prefix(+RocksDB, -Suffix, -Value, +Prefix) is nondet.
+%!	rocks_enum_prefix(+RocksDB, -Suffix, -Value, +Prefix, +Options) is nondet.
 %
 %	True for all keys that start   with Prefix. Instead of returning
 %	the full key this predicate returns the _suffix_ of the matching
 %	key. This predicate  succeeds  deterministically   no  next  key
 %	exists or the next key does not match Prefix.
+%
+%       Options are the same as for rocks_get/4.
+
+rocks_enum_prefix(RocksDB, Suffix, Value, Prefix) :-
+    rocks_enum_prefix(RocksDB, Suffix, Value, Prefix, []).
 
 
 %!	rocks_batch(+RocksDB, +Actions:list) is det.
+%!	rocks_batch(+RocksDB, +Actions:list, +Options) is det.
 %
 %	Perform  a  batch  of  operations  on  RocksDB  as  an  _atomic_
-%	operation. Actions is a list of:
+%	operation.
+%
+%       Options are the same as for rocks_put/4.
+%
+%       Actions is a list of:
 %
 %	  - delete(+Key)
 %	  As rocks_delete/2.
@@ -271,6 +454,9 @@ is_meta(merge).
 %		        put(key2, Value)
 %		      ])
 %	==
+
+rocks_batch(RocksDB, Actions) :-
+    rocks_batch(RocksDB, Actions, []).
 
 
 %!  rocks_property(+RocksDB, ?Property) is nondet

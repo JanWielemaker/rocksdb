@@ -36,6 +36,14 @@
 :- module(test_rocksdb,
 	  [ test_rocksdb/0
 	  ]).
+:- encoding(utf8).
+
+:- asserta(user:file_search_path(foreign, '.')).
+:- asserta(user:file_search_path(foreign, '..')).
+:- asserta(user:file_search_path(foreign, '../cpp')).
+:- asserta(user:file_search_path(library, '.')).
+:- asserta(user:file_search_path(library, '../prolog')).
+
 :- use_module(library(rocksdb)).
 :- use_module(library(plunit)).
 :- use_module(library(debug)).
@@ -46,13 +54,14 @@ test_rocksdb :-
 		    types,
 		    merge,
 		    builtin_merge,
-                    properties,
+		    properties,
 		    enum
 		  ]).
 
 :- begin_tests(rocks, [cleanup(delete_db)]).
 
-test(basic, Noot == noot) :-
+test(basic, [Noot == noot,
+	     cleanup(delete_db)]) :-
 	test_db(Dir),
 	rocks_open(Dir, RocksDB, []),
 	rocks_put(RocksDB, aap, noot),
@@ -60,29 +69,60 @@ test(basic, Noot == noot) :-
 	rocks_delete(RocksDB, aap),
 	assertion(\+ rocks_get(RocksDB, aap, _)),
 	rocks_close(RocksDB).
-test(basic, Noot == noot) :-
+test(basic, [Noot == noot,
+	     cleanup(delete_db)]) :-
 	test_db(Dir),
 	rocks_open(Dir, RocksDB, []),
-	rocks_put(RocksDB, aap, noot),
+	rocks_put(RocksDB, aap, noot, [sync(true)]),
 	rocks_close(RocksDB),
-        rocks_open(Dir, RocksDB2, [mode(read_only)]),
-	rocks_get(RocksDB2, aap, Noot),
+	rocks_open(Dir, RocksDB2, [mode(read_only)]),
+	rocks_get(RocksDB2, aap, Noot, [fill_cache(false)]),
 	rocks_close(RocksDB2).
-test(open_twice, error(rocks_error(_))) :-
+test(options1, [error(type_error(bool,xxx),_),
+		cleanup(delete_db)]) :-
+	test_db(Dir),
+	rocks_open(Dir, _RocksDB, [error_if_exists(xxx)]).
+test(options2, [error(type_error(option,this_is_not_an_option(123)),_),
+		cleanup(delete_db)]) :-
+	test_db(Dir),
+	rocks_open(Dir, _RocksDB, [this_is_not_an_option(123)]).
+test(options3, [error(domain_error(mode_option,not_read_write),_),
+		cleanup(delete_db)]) :-
+	test_db(Dir),
+	rocks_open(Dir, _RocksDB, [mode(not_read_write)]).
+test(options4, [error(rocks_error('Not implemented: Not supported operation in read only mode.'),_),
+		cleanup(delete_db)]) :-
+	test_db(Dir),
+	rocks_open(Dir, RocksDB0, [key(string), value(string)]),
+	rocks_close(RocksDB0),
+	setup_call_cleanup(
+	    rocks_open(Dir, RocksDB, [mode(read_only)]),
+	    (   rocks_put(RocksDB, "one", "àmímé níshíkíhéꜜbì"),
+	        rocks_get(RocksDB, "one", "àmímé níshíkíhéꜜbì")
+	    ),
+	    rocks_close(RocksDB)).
+test(options5, [cleanup(delete_db)]) :-
+	test_db(Dir),
+	setup_call_cleanup(
+	    rocks_open(Dir, RocksDB, [key(string), value(string), mode(read_write)]),
+	    rocks_put(RocksDB, "one", "àmímé níshíkíhéꜜbì"),
+	    rocks_close(RocksDB)).
+test(open_twice, [error(rocks_error(_),_), % TODO: error(rocks_error('IO error: lock hold by current process, acquire time 1657004085 acquiring thread 136471553664960: /tmp/test_rocksdb/LOCK: No locks available'),_)
+		  cleanup(delete_db)]) :-
 	test_db(Dir),
 	setup_call_cleanup(
 	    rocks_open(Dir, RocksDB1, []),
 	    call_cleanup(rocks_open(Dir, RocksDB2, []),
 			 rocks_close(RocksDB2)),
 	    rocks_close(RocksDB1)).
-test(batch, Pairs == [zus-noot]) :-
+test(batch, [Pairs == [zus-noot],
+	     cleanup(delete_db)]) :-
 	test_db(Dir),
 	rocks_open(Dir, RocksDB, []),
 	rocks_put(RocksDB, aap, noot),
 	rocks_get(RocksDB, aap, Value),
 	rocks_batch(RocksDB,
 		    [ delete(aap),
-		      delete(xxxx), % doesn't exist, but that's OK
 		      put(zus, Value)
 		    ]),
 	findall(K-V, rocks_enum(RocksDB, K, V), Pairs),
@@ -92,7 +132,8 @@ test(batch, Pairs == [zus-noot]) :-
 
 :- begin_tests(terms, [cleanup(delete_db)]).
 
-test(basic, Noot-Noot1 == noot(mies)-noot(1)) :-
+test(basic, [Noot-Noot1 == noot(mies)-noot(1),
+	     cleanup(delete_db)]) :-
 	test_db(Dir),
 	rocks_open(Dir, RocksDB,
 		   [ key(term),
@@ -108,7 +149,7 @@ test(basic, Noot-Noot1 == noot(mies)-noot(1)) :-
 
 :- begin_tests(types, [cleanup(delete_db)]).
 
-test(int32) :-
+test(int32, [cleanup(delete_db)]) :-
 	Min = -100, Max = 100,
 	test_db(Dir),
 	rocks_open(Dir, RocksDB,
@@ -120,7 +161,7 @@ test(int32) :-
 		 assertion(rocks_get(RocksDB, key, I)))),
 	rocks_close(RocksDB).
 
-test(int64) :-
+test(int64, [cleanup(delete_db)]) :-
 	Min = -100, Max = 100,
 	test_db(Dir),
 	rocks_open(Dir, RocksDB,
@@ -132,7 +173,7 @@ test(int64) :-
 		 assertion(rocks_get(RocksDB, key, I)))),
 	rocks_close(RocksDB).
 
-test(float) :-
+test(float, [cleanup(delete_db)]) :-
 	Min = -100, Max = 100,
 	test_db(Dir),
 	rocks_open(Dir, RocksDB,
@@ -146,7 +187,7 @@ test(float) :-
 		 assertion(abs(F-F2) < 0.00001))),
 	rocks_close(RocksDB).
 
-test(double) :-
+test(double, [cleanup(delete_db)]) :-
 	Min = -100, Max = 100,
 	test_db(Dir),
 	rocks_open(Dir, RocksDB,
@@ -164,7 +205,8 @@ test(double) :-
 
 :- begin_tests(merge, [cleanup(delete_db)]).
 
-test(set, FinalOk == Final) :-
+test(set, [FinalOk == Final,
+	   cleanup(delete_db)]) :-
 	N = 100,
 	numlist(1, N, FinalOk),
 	test_db(Dir),
@@ -183,7 +225,8 @@ test(set, FinalOk == Final) :-
 	       )),
 	rocks_get(DB, set, Final),
 	rocks_close(DB).
-test(new, Final == [1]) :-
+test(new, [Final == [1],
+	   cleanup(delete_db)]) :-
 	test_db(Dir),
 	rocks_open(Dir, DB,
 		   [ merge(merge),
@@ -205,8 +248,8 @@ merge(full, _Key, Initial, Additions, Result) :-
 
 :- begin_tests(builtin_merge, [cleanup(delete_db)]).
 
-test(merge, [ Final == FinalOk,
-	    cleanup(delete_db)]) :-
+test(merge, [Final == FinalOk,
+	     cleanup(delete_db)]) :-
 	N = 100,
 	numlist(1, N, FinalOk),
 	test_db(Dir),
@@ -223,8 +266,8 @@ test(merge, [ Final == FinalOk,
 	       )),
 	rocks_get(DB, set, Final),
 	rocks_close(DB).
-test(put_set, [ Final == [3,5,7],
-		cleanup(delete_db)]) :-
+test(put_set, [Final == [3,5,7],
+	       cleanup(delete_db)]) :-
 	test_db(Dir),
 	rocks_open(Dir, DB,
 		   [ value(set(int64))
@@ -232,8 +275,8 @@ test(put_set, [ Final == [3,5,7],
 	rocks_put(DB, set, [5,3,7,5]),
 	rocks_get(DB, set, Final),
 	rocks_close(DB).
-test(merge_set, [ Final == [3,5],
-		cleanup(delete_db)]) :-
+test(merge_set, [Final == [3,5],
+		 cleanup(delete_db)]) :-
 	test_db(Dir),
 	rocks_open(Dir, DB,
 		   [ value(set(int64))
@@ -248,7 +291,7 @@ test(merge_set, [ Final == [3,5],
 
 :- begin_tests(properties, [cleanup(delete_db)]).
 
-test(basic) :-
+test(basic, [cleanup(delete_db)]) :-
 	test_db(Dir),
 	rocks_open(Dir, DB,
 		   [ key(term),
@@ -257,7 +300,7 @@ test(basic) :-
 	rocks_put(DB, aap, noot(mies)),
 	rocks_put(DB, aap(1), noot(1)),
 	rocks_property(DB, estimate_num_keys(Num)),
-        assertion(integer(Num)),
+	assertion(integer(Num)),
 	rocks_close(DB).
 
 :- end_tests(properties).
@@ -278,7 +321,8 @@ test(enum,
 	rocks_put(RocksDB, noot, 3),
 	findall(Key, rocks_enum_from(RocksDB, Key, _, aap), Keys),
 	rocks_enum_prefix(RocksDB, Rest, _, aapj),
-	assertion(Rest == "e").
+	assertion(Rest == "e"),
+	rocks_close(RocksDB).
 
 :- end_tests(enum).
 

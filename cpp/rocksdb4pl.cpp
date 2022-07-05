@@ -189,7 +189,7 @@ release_rocks_ref(atom_t aref)
 
   assert(ref->name == NULL_ATOM);
 
-  { auto db=ref->db;
+  { auto db = ref->db;
     if ( db )
     { ref->db = NULL;
       delete db;
@@ -336,7 +336,7 @@ class PlSlice : public Slice
 public:
   int must_free = 0;
   union
-  { int     i32; // int32_t
+  { int     i32;  // int32_t
     int64_t i64;
     float   f32;
     double  f64;
@@ -731,7 +731,7 @@ sort(std::string &str, blob_type type)
       case BLOB_INT64:
       { auto ip = reinterpret_cast<int64_t *>(s);
 	auto op = ip+1;
-        auto ep = reinterpret_cast<int64_t *>(s+len);
+	auto ep = reinterpret_cast<int64_t *>(s+len);
 	int64_t cv;
 
 	qsort(s, len/sizeof(int64_t), sizeof(int64_t), cmp_int32);
@@ -892,6 +892,339 @@ get_blob_type(PlTerm t, blob_type *key_type, merger_t *m)
 }
 
 
+typedef void (*ReadOptdefAction)(rocksdb::ReadOptions *options, PlTerm t);
+
+struct ReadOptdef
+{ const char *name;
+  ReadOptdefAction action;
+  atom_t atom; // Initially 0; filled in as-needed by lookup
+};
+
+#define RD_ODEF [](rocksdb::ReadOptions *options, PlTerm arg)
+
+static ReadOptdef read_optdefs[] =
+{ // "snapshot" const Snapshot*
+  // "iterate_lower_bound" const Slice*
+  // "iterate_upper_bound" const Slice*
+  {         "readahead_size",                       RD_ODEF {
+    options->readahead_size                       = static_cast<size_t>(arg); } },
+  {         "max_skippable_internal_keys",          RD_ODEF {
+    options->max_skippable_internal_keys          = static_cast<uint64_t>(arg); } },
+  // "read_tier" ReadTier
+  {         "verify_checksums",                     RD_ODEF {
+    options->verify_checksums                     = static_cast<bool>(arg); } },
+  {         "fill_cache",                           RD_ODEF {
+    options->fill_cache                           = static_cast<bool>(arg); } },
+  {         "tailing",                              RD_ODEF {
+    options->tailing                              = static_cast<bool>(arg); } },
+  // "managed" - not used any more
+  {         "total_order_seek",                     RD_ODEF {
+    options->total_order_seek                     = static_cast<bool>(arg); } },
+  {         "auto_prefix_mode",                     RD_ODEF {
+    options->auto_prefix_mode                     = static_cast<bool>(arg); } },
+  {         "prefix_same_as_start",                 RD_ODEF {
+    options->prefix_same_as_start                 = static_cast<bool>(arg); } },
+  {         "pin_data",                             RD_ODEF {
+    options->pin_data                             = static_cast<bool>(arg); } },
+  {         "background_purge_on_iterator_cleanup", RD_ODEF {
+    options->background_purge_on_iterator_cleanup = static_cast<bool>(arg); } },
+  {         "ignore_range_deletions",               RD_ODEF {
+    options->ignore_range_deletions               = static_cast<bool>(arg); } },
+  // "table_filter" std::function<bool(const TableProperties&)>
+  {         "iter_start_seqnum",                    RD_ODEF {
+    options->iter_start_seqnum                    = static_cast<SequenceNumber>(arg); } },
+  //         "timestamp" Slice*
+  // "iter_start_ts" Slice*
+  {
+             "deadline",                            RD_ODEF {
+    options->deadline                             = static_cast<std::chrono::microseconds>(arg); } },
+  {         "io_timeout",                           RD_ODEF {
+    options->io_timeout                           = static_cast<std::chrono::microseconds>(arg); } },
+  {         "value_size_soft_limit",                RD_ODEF {
+    options->value_size_soft_limit                = static_cast<uint64_t>(arg); } },
+
+  { NULL }
+};
+
+
+// TODO: consolidate lookup_read_optdef_and_apply,
+//       lookup_write_optdef_and_apply, lookup_optdef_and_apply;
+//       possibly using STL map (although that doesn't support
+//       lazy filling in of the atoms in the lookup table)
+static void
+lookup_read_optdef_and_apply(rocksdb::ReadOptions *options,
+			     ReadOptdef opt_defs[],
+			     atom_t name, PlTerm opt)
+{ for(auto def=opt_defs; def->name; def++)
+  { if ( !def->atom ) // lazilly fill in atoms in lookup table
+      def->atom = PL_new_atom(def->name);
+    if ( def->atom == name )
+    { def->action(options, opt[1]);
+      return;
+    }
+  }
+  throw PlTypeError("option", opt);
+}
+
+
+typedef void (*WriteOptdefAction)(rocksdb::WriteOptions *options, PlTerm t);
+
+struct WriteOptdef
+{ const char *name;
+  WriteOptdefAction action;
+  atom_t atom; // Initially 0; filled in as-needed by lookup
+};
+
+#define WR_ODEF [](rocksdb::WriteOptions *options, PlTerm arg)
+
+static WriteOptdef write_optdefs[] =
+{ {         "sync",                           WR_ODEF {
+    options->sync                           = static_cast<bool>(arg); } },
+  {         "disableWAL",                     WR_ODEF {
+    options->disableWAL                     = static_cast<bool>(arg); } },
+  {         "ignore_missing_column_families", WR_ODEF {
+    options->ignore_missing_column_families = static_cast<bool>(arg); } },
+  {         "no_slowdown",                    WR_ODEF {
+    options->no_slowdown                    = static_cast<bool>(arg); } },
+  {         "low_pri",                        WR_ODEF {
+    options->low_pri                        = static_cast<bool>(arg); } },
+  {         "memtable_insert_hint_per_batch", WR_ODEF {
+    options->memtable_insert_hint_per_batch = static_cast<bool>(arg); } },
+  // "timestamp" Slice*
+
+{ NULL }
+};
+
+
+static void
+lookup_write_optdef_and_apply(rocksdb::WriteOptions *options,
+			      WriteOptdef opt_defs[],
+			      atom_t name, PlTerm opt)
+{ for(auto def=opt_defs; def->name; def++)
+  { if ( !def->atom ) // lazilly fill in atoms in lookup table
+      def->atom = PL_new_atom(def->name);
+    if ( def->atom == name )
+    { def->action(options, opt[1]);
+      return;
+    }
+  }
+  throw PlTypeError("option", opt);
+}
+
+static void
+lookup_InfoLogLevel(rocksdb::Options *options, PlTerm arg)
+{ const auto str = static_cast<std::string>(arg);
+  if ( str == "debug"  ) { options->info_log_level = DEBUG_LEVEL;  return; }
+  if ( str == "info"   ) { options->info_log_level = INFO_LEVEL;   return; }
+  if ( str == "warn"   ) { options->info_log_level = WARN_LEVEL;   return; }
+  if ( str == "error"  ) { options->info_log_level = ERROR_LEVEL;  return; }
+  if ( str == "fatal"  ) { options->info_log_level = FATAL_LEVEL;  return; }
+  if ( str == "header" ) { options->info_log_level = HEADER_LEVEL; return; }
+  throw PlTypeError("InfoLogLevel", arg);
+}
+
+
+typedef void (*OptdefAction)(rocksdb::Options *options, PlTerm t);
+
+struct Optdef
+{ const char *name;
+  OptdefAction action;
+  atom_t atom; // Initially 0; filled in as-needed by lookup
+};
+
+#define ODEF [](rocksdb::Options *options, PlTerm arg)
+
+static Optdef optdefs[] =
+{ { "prepare_for_bulk_load",                           ODEF { if ( static_cast<bool>(arg) ) options->PrepareForBulkLoad(); } }, // TODO: what to do with false?
+  { "optimize_for_small_db",                           ODEF { if ( static_cast<bool>(arg) ) options->OptimizeForSmallDb(); } }, // TODO: what to do with false? - there's no DontOptimizeForSmallDb()
+#ifndef ROCKSDB_LITE
+  { "increase_parallelism",                            ODEF { if ( static_cast<bool>(arg) ) options->IncreaseParallelism(); } },
+#endif
+  {         "create_if_missing",                       ODEF {
+    options->create_if_missing                       = static_cast<bool>(arg); } },
+  {         "create_missing_column_families",          ODEF {
+    options->create_missing_column_families          = static_cast<bool>(arg); } },
+  {         "error_if_exists",                         ODEF {
+    options->error_if_exists                         = static_cast<bool>(arg); } },
+  {         "paranoid_checks",                         ODEF {
+    options->paranoid_checks                         = static_cast<bool>(arg); } },
+  {         "track_and_verify_wals_in_manifest",       ODEF {
+    options->track_and_verify_wals_in_manifest       = static_cast<bool>(arg); } },
+  // "env" Env::Default
+  // "rate_limiter" - shared_ptr<RateLimiter>
+  // "sst_file_manager" - shared_ptr<SstFileManager>
+
+  // "info_log" - shared_ptr<Logger> // TODO: allow specifying a callback and/or stream
+  { "info_log_level",                                  lookup_InfoLogLevel },
+  {         "max_open_files",                          ODEF {
+    options->max_open_files                          = static_cast<int>(arg); } },
+  {         "max_file_opening_threads",                ODEF {
+    options-> max_file_opening_threads               = static_cast<int>(arg); } },
+  {         "max_total_wal_size",                      ODEF {
+    options->max_total_wal_size                      = static_cast<uint64_t>(arg); } },
+  // "statistics" - shared_ptr<Statistics>
+  {         "use_fsync",                               ODEF {
+    options->use_fsync                               = static_cast<bool>(arg); } },
+  // "db_paths" - vector<DbPath>
+  {         "db_log_dir",                              ODEF {
+    options->db_log_dir                              = static_cast<std::string>(arg); } },
+  {         "wal_dir",                                 ODEF {
+    options->wal_dir                                 = static_cast<std::string>(arg); } },
+  {         "delete_obsolete_files_period_micros",     ODEF {
+    options->delete_obsolete_files_period_micros     = static_cast<uint64_t>(arg); } },
+  {         "max_background_jobs",                     ODEF {
+    options->max_background_jobs                     = static_cast<uint64_t>(arg); } },
+  // base_background_compactions is obsolete
+  // max_background_compactions is obsolete
+  {         "max_subcompactions",                      ODEF {
+    options->max_subcompactions                      = static_cast<uint32_t>(arg); } },
+  // max_background_flushes is obsolete
+  {         "max_log_file_size",                       ODEF {
+    options->max_log_file_size                       = static_cast<size_t>(arg); } },
+  {         "log_file_time_to_roll",                   ODEF {
+    options->log_file_time_to_roll                   = static_cast<size_t>(arg); } },
+  {         "keep_log_file_num",                       ODEF {
+    options->keep_log_file_num                       = static_cast<size_t>(arg); } },
+  {         "recycle_log_file_num",                    ODEF {
+    options->recycle_log_file_num                    = static_cast<size_t>(arg); } },
+  {         "max_manifest_file_size",                  ODEF {
+    options->max_manifest_file_size                  = static_cast<uint64_t>(arg); } },
+  {         "table_cache_numshardbits",                ODEF {
+    options->table_cache_numshardbits                = static_cast<int>(arg); } },
+  {         "wal_ttl_seconds",                         ODEF {
+    options->WAL_ttl_seconds                         = static_cast<uint64_t>(arg); } },
+  {         "wal_size_limit_mb",                       ODEF {
+    options->WAL_size_limit_MB                       = static_cast<uint64_t>(arg); } },
+  {         "manifest_preallocation_size",             ODEF {
+    options->manifest_preallocation_size             = static_cast<size_t>(arg); } },
+  {         "allow_mmap_reads",                        ODEF {
+    options->allow_mmap_reads                        = static_cast<bool>(arg); } },
+  {         "allow_mmap_writes",                       ODEF {
+    options->allow_mmap_writes                       = static_cast<bool>(arg); } },
+  {         "use_direct_reads",                        ODEF {
+    options->use_direct_reads                        = static_cast<bool>(arg); } },
+  {         "use_direct_io_for_flush_and_compaction",  ODEF {
+    options->use_direct_io_for_flush_and_compaction  = static_cast<bool>(arg); } },
+  {         "allow_fallocate",                         ODEF {
+    options->allow_fallocate                         = static_cast<bool>(arg); } },
+  {         "is_fd_close_on_exec",                     ODEF {
+    options->is_fd_close_on_exec                     = static_cast<bool>(arg); } },
+  // skip_log_error_on_recovery is obsolete
+  {         "stats_dump_period_sec",                   ODEF {
+    options->stats_dump_period_sec                   = static_cast<unsigned int>(arg); } },
+  {         "stats_persist_period_sec",                ODEF {
+    options->stats_persist_period_sec                = static_cast<unsigned int>(arg); } },
+  {         "persist_stats_to_disk",                   ODEF {
+    options->persist_stats_to_disk                   = static_cast<bool>(arg); } },
+  {         "stats_history_buffer_size",               ODEF {
+    options->stats_history_buffer_size               = static_cast<size_t>(arg); } },
+  {         "advise_random_on_open",                   ODEF {
+    options->advise_random_on_open                   = static_cast<bool>(arg); } },
+  {         "db_write_buffer_size",                    ODEF {
+    options->db_write_buffer_size                    = static_cast<size_t>(arg); } },
+  // "write_buffer_manager" - shared_ptr<WriteBufferManager>
+  // "access_hint_on_compaction_start" - enum AccessHint
+  {         "new_table_reader_for_compaction_inputs",  ODEF {
+    options->new_table_reader_for_compaction_inputs  = static_cast<bool>(arg); } },
+  {         "compaction_readahead_size",               ODEF {
+    options->compaction_readahead_size               = static_cast<size_t>(arg); } },
+  {         "random_access_max_buffer_size",           ODEF {
+    options->random_access_max_buffer_size           = static_cast<size_t>(arg); } },
+  {         "writable_file_max_buffer_size",           ODEF {
+    options->writable_file_max_buffer_size           = static_cast<size_t>(arg); } },
+  {         "use_adaptive_mutex",                      ODEF {
+    options->use_adaptive_mutex                      = static_cast<bool>(arg); } },
+  {         "bytes_per_sync",                          ODEF {
+    options->bytes_per_sync                          = static_cast<uint64_t>(arg); } },
+  {         "wal_bytes_per_sync",                      ODEF {
+    options->wal_bytes_per_sync                      = static_cast<uint64_t>(arg); } },
+  {         "strict_bytes_per_sync",                   ODEF {
+    options->strict_bytes_per_sync                   = static_cast<bool>(arg); } },
+  // "listeners" - vector<shared_ptr<EventListener>>
+  {         "enable_thread_tracking",                  ODEF {
+    options->enable_thread_tracking                  = static_cast<bool>(arg); } },
+  {         "delayed_write_rate",                      ODEF {
+    options->delayed_write_rate                      = static_cast<uint64_t>(arg); } },
+  {         "enable_pipelined_write",                  ODEF {
+    options->enable_pipelined_write                  = static_cast<bool>(arg); } },
+  {         "unordered_write",                         ODEF {
+    options->unordered_write                         = static_cast<bool>(arg); } },
+  {         "allow_concurrent_memtable_write",         ODEF {
+    options->allow_concurrent_memtable_write         = static_cast<bool>(arg); } },
+  {         "enable_write_thread_adaptive_yield",      ODEF {
+    options->enable_write_thread_adaptive_yield      = static_cast<bool>(arg); } },
+  {         "max_write_batch_group_size_bytes",        ODEF {
+    options->max_write_batch_group_size_bytes        = static_cast<uint64_t>(arg); } },
+  {         "write_thread_max_yield_usec",             ODEF {
+    options->write_thread_max_yield_usec             = static_cast<uint64_t>(arg); } },
+  {         "write_thread_slow_yield_usec",            ODEF {
+    options->write_thread_slow_yield_usec            = static_cast<uint64_t>(arg); } },
+  {         "skip_stats_update_on_db_open",            ODEF {
+    options->skip_stats_update_on_db_open            = static_cast<bool>(arg); } },
+  {         "skip_checking_sst_file_sizes_on_db_open", ODEF {
+    options->skip_checking_sst_file_sizes_on_db_open = static_cast<bool>(arg); } },
+  // "wal_recovery_mode" - enum WALRecoveryMode
+  {         "allow_2pc",                               ODEF {
+    options->allow_2pc                               = static_cast<bool>(arg); } },
+  // "row_cache" - shared_ptr<Cache>
+  // "wal_filter" - WalFilter*
+  {         "fail_ifoptions_file_error",               ODEF {
+    options->fail_if_options_file_error              = static_cast<bool>(arg); } },
+  {         "dump_malloc_stats",                       ODEF {
+    options->dump_malloc_stats                       = static_cast<bool>(arg); } },
+  {         "avoid_flush_during_recovery",             ODEF {
+    options->avoid_flush_during_recovery             = static_cast<bool>(arg); } },
+  {         "avoid_flush_during_shutdown",             ODEF {
+    options->avoid_flush_during_shutdown             = static_cast<bool>(arg); } },
+  {         "allow_ingest_behind",                     ODEF {
+    options->allow_ingest_behind                     = static_cast<bool>(arg); } },
+  {         "preserve_deletes",                        ODEF {
+    options->preserve_deletes                        = static_cast<bool>(arg); } },
+  {         "two_write_queues",                        ODEF {
+    options->two_write_queues                        = static_cast<bool>(arg); } },
+  {         "manual_wal_flush",                        ODEF {
+    options->manual_wal_flush                        = static_cast<bool>(arg); } },
+  {         "atomic_flush",                            ODEF {
+    options->atomic_flush                            = static_cast<bool>(arg); } },
+  {         "avoid_unnecessary_blocking_io",           ODEF {
+    options->avoid_unnecessary_blocking_io           = static_cast<bool>(arg); } },
+  {         "write_dbid_to_manifest",                  ODEF {
+    options->write_dbid_to_manifest                  = static_cast<bool>(arg); } },
+  {         "log_readahead_size",                      ODEF {
+    options->write_dbid_to_manifest                  = static_cast<bool>(arg); } },
+  //         file_checksum_gen_factory
+  { "best_efforts_recovery",                           ODEF {
+    options->best_efforts_recovery                   = static_cast<bool>(arg); } },
+  {         "max_bgerror_resume_count",                ODEF {
+    options->max_bgerror_resume_count                = static_cast<int>(arg); } },
+  {         "bgerror_resume_retry_interval",           ODEF {
+    options->bgerror_resume_retry_interval           = static_cast<uint64_t>(arg); } },
+  {         "allow_data_in_errors",                    ODEF {
+    options->allow_data_in_errors                    = static_cast<bool>(arg); } },
+  {         "db_host_id",                              ODEF {
+    options->db_host_id                              = static_cast<std::string>(arg); } },
+  // "checksum_handoff_file_types" - FileTypeSet
+
+  { NULL }
+};
+
+
+static void
+lookup_optdef_and_apply(rocksdb::Options *options,
+			Optdef opt_defs[],
+			atom_t name, PlTerm opt)
+{ for(auto def=opt_defs; def->name; def++)
+  { if ( !def->atom ) // lazilly fill in atoms in lookup table
+      def->atom = PL_new_atom(def->name);
+    if ( def->atom == name )
+    { def->action(options, opt[1]);
+      return;
+    }
+  }
+  throw PlTypeError("option", opt);
+}
+
+
 PREDICATE(rocks_open_, 3)
 { rocksdb::Options options;
   options.create_if_missing = true;
@@ -936,18 +1269,19 @@ PREDICATE(rocks_open_, 3)
       { atom_t a;
 
 	if ( PL_get_atom(opt[1], &a) )
-	{      if ( ATOM_read_write == a )
-	    ;
+	{ if ( ATOM_read_write == a )
+	    read_only = FALSE;
 	  else if ( ATOM_read_only == a )
 	    read_only = TRUE;
 	  else
-	    PlDomainError("mode_option", opt[1]);
-	}
-
-	PlTypeError("atom", opt[1]);
-	}
+	    throw PlDomainError("mode_option", opt[1]);
+	} else
+	  throw PlTypeError("atom", opt[1]);
+      } else
+      { lookup_optdef_and_apply(&options, optdefs, name, opt);
+      }
     } else
-      PlTypeError("option", opt);
+      throw PlTypeError("option", opt);
   }
 
   if ( alias && once )
@@ -1010,7 +1344,25 @@ PREDICATE(rocks_close, 1)
 }
 
 
-PREDICATE(rocks_put, 3)
+static WriteOptions
+write_options(PlTerm options_term)
+{ WriteOptions options;
+  PlTail tail(options_term);
+  PlTerm opt;
+  while(tail.next(opt))
+  { atom_t name;
+    size_t arity;
+
+    if ( PL_get_name_arity(opt, &name, &arity) && arity == 1 )
+     lookup_write_optdef_and_apply(&options, write_optdefs, name, opt);
+    else
+      throw PlTypeError("option", opt);
+  }
+  return options;
+}
+
+
+PREDICATE(rocks_put, 4)
 { dbref *ref;
   PlSlice key;
 
@@ -1021,7 +1373,7 @@ PREDICATE(rocks_put, 3)
   { PlSlice value;
 
     get_slice(A3, value, ref->type.value);
-    ok(ref->db->Put(WriteOptions(), key, value));
+    ok(ref->db->Put(write_options(A4), key, value));
   } else
   { PlTail list(A3);
     PlTerm tmp;
@@ -1037,13 +1389,13 @@ PREDICATE(rocks_put, 3)
     if ( ref->builtin_merger == MERGE_SET )
       sort(value, ref->type.value);
 
-    ok(ref->db->Put(WriteOptions(), key, value));
+    ok(ref->db->Put(write_options(A4), key, value));
   }
 
   return TRUE;
 }
 
-PREDICATE(rocks_merge, 3)
+PREDICATE(rocks_merge, 4)
 { dbref *ref;
   PlSlice key, value;
 
@@ -1054,30 +1406,48 @@ PREDICATE(rocks_merge, 3)
   get_slice(A2, key,   ref->type.key);
   get_slice(A3, value, ref->type.value);
 
-  ok(ref->db->Merge(WriteOptions(), key, value));
+  ok(ref->db->Merge(write_options(A4), key, value));
 
   return TRUE;
 }
 
-PREDICATE(rocks_get, 3)
+static ReadOptions
+read_options(PlTerm options_term)
+{ ReadOptions options;
+  PlTail tail(options_term);
+  PlTerm opt;
+  while(tail.next(opt))
+  { atom_t name;
+    size_t arity;
+
+    if ( PL_get_name_arity(opt, &name, &arity) && arity == 1 )
+     lookup_read_optdef_and_apply(&options, read_optdefs, name, opt);
+    else
+      throw PlTypeError("option", opt);
+  }
+  return options;
+}
+
+PREDICATE(rocks_get, 4)
 { dbref *ref;
   PlSlice key;
   std::string value;
 
   get_rocks(A1, &ref);
   get_slice(A2, key, ref->type.key);
-  return ( ok(ref->db->Get(ReadOptions(), key, &value)) &&
-           unify_value(A3, value, ref->builtin_merger, ref->type.value) );
+
+  return ( ok(ref->db->Get(read_options(A4), key, &value)) &&
+	   unify_value(A3, value, ref->builtin_merger, ref->type.value) );
 }
 
-PREDICATE(rocks_delete, 2)
+PREDICATE(rocks_delete, 3)
 { dbref *ref;
   PlSlice key;
 
   get_rocks(A1, &ref);
   get_slice(A2, key, ref->type.key);
 
-  return ok(ref->db->Delete(WriteOptions(), key));
+  return ok(ref->db->Delete(write_options(A3), key));
 }
 
 typedef enum
@@ -1155,7 +1525,7 @@ enum_key_prefix(const enum_state *state)
 
 
 static foreign_t
-rocks_enum(PlTermv PL_av, int ac, enum_type type, control_t handle)
+rocks_enum(PlTermv PL_av, int ac, enum_type type, control_t handle, ReadOptions options)
 { enum_state state_buf = {0};
   enum_state *state = &state_buf;
 
@@ -1178,10 +1548,10 @@ rocks_enum(PlTermv PL_av, int ac, enum_type type, control_t handle)
 	{ state->prefix.length = len;
 	  state->prefix.string = prefix;
 	}
-	state->it = state->ref->db->NewIterator(ReadOptions());
+	state->it = state->ref->db->NewIterator(options);
 	state->it->Seek(prefix);
       } else
-      { state->it = state->ref->db->NewIterator(ReadOptions());
+      { state->it = state->ref->db->NewIterator(options);
 	state->it->SeekToFirst();
       }
       state->type = type;
@@ -1219,16 +1589,16 @@ rocks_enum(PlTermv PL_av, int ac, enum_type type, control_t handle)
   PL_fail;
 }
 
-PREDICATE_NONDET(rocks_enum, 3)
-{ return rocks_enum(PL_av, 3, ENUM_ALL, handle);
+PREDICATE_NONDET(rocks_enum, 4)
+{ return rocks_enum(PL_av, 3, ENUM_ALL, handle, read_options(A4));
 }
 
-PREDICATE_NONDET(rocks_enum_from, 4)
-{ return rocks_enum(PL_av, 4, ENUM_FROM, handle);
+PREDICATE_NONDET(rocks_enum_from, 5)
+{ return rocks_enum(PL_av, 4, ENUM_FROM, handle, read_options(A5));
 }
 
-PREDICATE_NONDET(rocks_enum_prefix, 4)
-{ return rocks_enum(PL_av, 4, ENUM_PREFIX, handle);
+PREDICATE_NONDET(rocks_enum_prefix, 5)
+{ return rocks_enum(PL_av, 4, ENUM_PREFIX, handle, read_options(A5));
 }
 
 static PlAtom ATOM_delete("delete");
@@ -1252,15 +1622,15 @@ batch_operation(const dbref *ref, WriteBatch &batch, PlTerm e)
       get_slice(e[2], value, ref->type.value);
       batch.Put(key, value);
     } else
-    { PlDomainError("rocks_batch_operation", e);
+    { throw PlDomainError("rocks_batch_operation", e);
     }
   } else
-  { PlTypeError("compound", e);
+  { throw PlTypeError("compound", e);
   }
 }
 
 
-PREDICATE(rocks_batch, 2)
+PREDICATE(rocks_batch, 3)
 { dbref *ref;
 
   get_rocks(A1, &ref);
@@ -1272,7 +1642,7 @@ PREDICATE(rocks_batch, 2)
   { batch_operation(ref, batch, e);
   }
 
-  return ok(ref->db->Write(WriteOptions(), &batch));
+  return ok(ref->db->Write(write_options(A3), &batch));
 }
 
 
