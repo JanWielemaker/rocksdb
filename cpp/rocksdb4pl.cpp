@@ -835,27 +835,34 @@ public:
 		 *	    PREDICATES		*
 		 *******************************/
 
-static PlAtom ATOM_key("key");
-static PlAtom ATOM_value("value");
-static PlAtom ATOM_alias("alias");
-static PlAtom ATOM_merge("merge");
+static const PlAtom ATOM_key("key");
+static const PlAtom ATOM_value("value");
+static const PlAtom ATOM_alias("alias");
+static const PlAtom ATOM_merge("merge");
 
-static PlAtom ATOM_atom("atom");
-static PlAtom ATOM_string("string");
-static PlAtom ATOM_binary("binary");
-static PlAtom ATOM_int32("int32");
-static PlAtom ATOM_int64("int64");
-static PlAtom ATOM_float("float");
-static PlAtom ATOM_double("double");
-static PlAtom ATOM_term("term");
-static PlAtom ATOM_open("open");
-static PlAtom ATOM_once("once");
-static PlAtom ATOM_mode("mode");
-static PlAtom ATOM_read_only("read_only");
-static PlAtom ATOM_read_write("read_write");
+static const PlAtom ATOM_atom("atom");
+static const PlAtom ATOM_string("string");
+static const PlAtom ATOM_binary("binary");
+static const PlAtom ATOM_int32("int32");
+static const PlAtom ATOM_int64("int64");
+static const PlAtom ATOM_float("float");
+static const PlAtom ATOM_double("double");
+static const PlAtom ATOM_term("term");
+static const PlAtom ATOM_open("open");
+static const PlAtom ATOM_once("once");
+static const PlAtom ATOM_mode("mode");
+static const PlAtom ATOM_read_only("read_only");
+static const PlAtom ATOM_read_write("read_write");
 
-static PlFunctor FUNCTOR_list1("list", 1);
-static PlFunctor FUNCTOR_set1("set", 1);
+static const PlAtom ATOM_debug("debug");
+static const PlAtom ATOM_info("info");
+static const PlAtom ATOM_warn("warn");
+static const PlAtom ATOM_error("error");
+static const PlAtom ATOM_fatal("fatal");
+static const PlAtom ATOM_header("header");
+
+static const PlFunctor FUNCTOR_list1("list", 1);
+static const PlFunctor FUNCTOR_set1("set", 1);
 
 static void
 get_blob_type(PlTerm t, blob_type *key_type, merger_t *m)
@@ -931,7 +938,7 @@ static ReadOptdef read_optdefs[] =
   {         "ignore_range_deletions",               RD_ODEF {
     options->ignore_range_deletions               = static_cast<bool>(arg); } },
   // "table_filter" std::function<bool(const TableProperties&)>
-  // TODO: "iter_start_seqnum" removed from rocksdb/options.h?
+  // TODO: "iter_start_seqnum" removed from rocksdb/include/options.h?
   // {         "iter_start_seqnum",                    RD_ODEF {
   //   options->iter_start_seqnum                    = static_cast<SequenceNumber>(arg); } },
   //         "timestamp" Slice*
@@ -1013,15 +1020,17 @@ lookup_write_optdef_and_apply(rocksdb::WriteOptions *options,
 }
 
 static void
-lookup_InfoLogLevel(rocksdb::Options *options, PlTerm arg)
-{ const auto str = static_cast<std::string>(arg);
-  if ( str == "debug"  ) { options->info_log_level = DEBUG_LEVEL;  return; }
-  if ( str == "info"   ) { options->info_log_level = INFO_LEVEL;   return; }
-  if ( str == "warn"   ) { options->info_log_level = WARN_LEVEL;   return; }
-  if ( str == "error"  ) { options->info_log_level = ERROR_LEVEL;  return; }
-  if ( str == "fatal"  ) { options->info_log_level = FATAL_LEVEL;  return; }
-  if ( str == "header" ) { options->info_log_level = HEADER_LEVEL; return; }
-  throw PlTypeError("InfoLogLevel", arg);
+options_set_InfoLogLevel(rocksdb::Options *options, PlTerm arg)
+{ InfoLogLevel log_level;
+  const auto arg_a = static_cast<PlAtom>(arg);
+       if ( arg_a == ATOM_debug  ) log_level = DEBUG_LEVEL;
+  else if ( arg_a == ATOM_info   ) log_level = INFO_LEVEL;
+  else if ( arg_a == ATOM_warn   ) log_level = WARN_LEVEL;
+  else if ( arg_a == ATOM_error  ) log_level = ERROR_LEVEL;
+  else if ( arg_a == ATOM_fatal  ) log_level = FATAL_LEVEL;
+  else if ( arg_a == ATOM_header ) log_level = HEADER_LEVEL;
+  else throw PlTypeError("InfoLogLevel", arg); // TODO: this causes SIGSEGV
+  options->info_log_level = log_level;
 }
 
 
@@ -1054,16 +1063,16 @@ static Optdef optdefs[] =
   // "env" Env::Default
   // "rate_limiter" - shared_ptr<RateLimiter>
   // "sst_file_manager" - shared_ptr<SstFileManager>
-
-  // "info_log" - shared_ptr<Logger> // TODO: allow specifying a callback and/or stream
-  { "info_log_level",                                  lookup_InfoLogLevel },
+  // "info_log" - shared_ptr<Logger> - see comment in ../README.md
+  { "info_log_level",                                  options_set_InfoLogLevel },
   {         "max_open_files",                          ODEF {
     options->max_open_files                          = static_cast<int>(arg); } },
   {         "max_file_opening_threads",                ODEF {
     options-> max_file_opening_threads               = static_cast<int>(arg); } },
   {         "max_total_wal_size",                      ODEF {
     options->max_total_wal_size                      = static_cast<uint64_t>(arg); } },
-  // "statistics" - shared_ptr<Statistics>
+  {         "statistics",                              ODEF {
+    options->statistics = static_cast<bool>(arg) ? CreateDBStatistics() : nullptr; } },
   {         "use_fsync",                               ODEF {
     options->use_fsync                               = static_cast<bool>(arg); } },
   // "db_paths" - vector<DbPath>
@@ -1075,11 +1084,11 @@ static Optdef optdefs[] =
     options->delete_obsolete_files_period_micros     = static_cast<uint64_t>(arg); } },
   {         "max_background_jobs",                     ODEF {
     options->max_background_jobs                     = static_cast<uint64_t>(arg); } },
-  // base_background_compactions is obsolete
-  // max_background_compactions is obsolete
+  // "base_background_compactions" is obsolete
+  // "max_background_compactions" is obsolete
   {         "max_subcompactions",                      ODEF {
     options->max_subcompactions                      = static_cast<uint32_t>(arg); } },
-  // max_background_flushes is obsolete
+  // "max_background_flushes" is obsolete
   {         "max_log_file_size",                       ODEF {
     options->max_log_file_size                       = static_cast<size_t>(arg); } },
   {         "log_file_time_to_roll",                   ODEF {
@@ -1110,7 +1119,7 @@ static Optdef optdefs[] =
     options->allow_fallocate                         = static_cast<bool>(arg); } },
   {         "is_fd_close_on_exec",                     ODEF {
     options->is_fd_close_on_exec                     = static_cast<bool>(arg); } },
-  // skip_log_error_on_recovery is obsolete
+  // "skip_log_error_on_recovery" is obsolete
   {         "stats_dump_period_sec",                   ODEF {
     options->stats_dump_period_sec                   = static_cast<unsigned int>(arg); } },
   {         "stats_persist_period_sec",                ODEF {
@@ -1125,7 +1134,7 @@ static Optdef optdefs[] =
     options->db_write_buffer_size                    = static_cast<size_t>(arg); } },
   // "write_buffer_manager" - shared_ptr<WriteBufferManager>
   // "access_hint_on_compaction_start" - enum AccessHint
-  // TODO: "new_table_reader_for_compaction_inputs"  removed from rocksdb/options.h?
+  // TODO: "new_table_reader_for_compaction_inputs"  removed from rocksdb/include/options.h?
   // {         "new_table_reader_for_compaction_inputs",  ODEF {
   //   options->new_table_reader_for_compaction_inputs  = static_cast<bool>(arg); } },
   {         "compaction_readahead_size",               ODEF {
@@ -1180,7 +1189,7 @@ static Optdef optdefs[] =
     options->avoid_flush_during_shutdown             = static_cast<bool>(arg); } },
   {         "allow_ingest_behind",                     ODEF {
     options->allow_ingest_behind                     = static_cast<bool>(arg); } },
-  // TODO: "preserve_deletes" removed from rocksdb/options.h?
+  // TODO: "preserve_deletes" removed from rocksdb/include/options.h?
   // {         "preserve_deletes",                        ODEF {
   //   options->preserve_deletes                        = static_cast<bool>(arg); } },
   {         "two_write_queues",                        ODEF {
@@ -1195,7 +1204,7 @@ static Optdef optdefs[] =
     options->write_dbid_to_manifest                  = static_cast<bool>(arg); } },
   {         "log_readahead_size",                      ODEF {
     options->write_dbid_to_manifest                  = static_cast<bool>(arg); } },
-  //         file_checksum_gen_factory
+  // "file_checksum_gen_factory" - std::shared_ptr<FileChecksumGenFactory>
   { "best_efforts_recovery",                           ODEF {
     options->best_efforts_recovery                   = static_cast<bool>(arg); } },
   {         "max_bgerror_resume_count",                ODEF {

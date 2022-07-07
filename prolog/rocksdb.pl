@@ -80,13 +80,12 @@
                        error_if_exists(boolean),
                        paranoid_checks(boolean),
                        track_and_verify_wals_in_manifest(boolean),
-                       % info_log, % TODO: callback for logging
-                       info_log_level(oneof([debug,info,warn,error,fatal,header])),
+                       info_log_level(oneof([debug,info,warn,error,fatal,header])), % default: info
                        env(boolean),
                        max_open_files(integer),
                        max_file_opening_threads(integer),
                        max_total_wal_size(integer),
-                       statistics(boolean),
+                       statistics(boolean), % TODO: this only creates a Statistics object
                        use_fsync(boolean),
                        db_log_dir(string),
                        wal_dir(string),
@@ -140,7 +139,7 @@
                        avoid_flush_during_recovery(boolean),
                        avoid_flush_during_shutdown(boolean),
                        allow_ingest_behind(boolean),
-                       % preserve_deletes(boolean), % TODO: removed from rocksdb/options.h?
+                       % preserve_deletes(boolean), % TODO: removed: https://github.com/facebook/rocksdb/issues/9090
                        two_write_queues(boolean),
                        manual_wal_flush(boolean),
                        atomic_flush(boolean),
@@ -166,7 +165,7 @@
                       pin_data(boolean),
                       background_purge_on_iterator_cleanup(boolean),
                       ignore_range_deletions(boolean),
-                      % iter_start_seqnum(integer), % TODO: removed from rocksdb/options.h?
+                      % iter_start_seqnum(integer), % TODO: removed https://github.com/facebook/rocksdb/issues/9090
                       io_timeout(integer),
                       value_size_soft_limit(integer)
                      ]).
@@ -276,8 +275,8 @@ See rocks_open/3 for details.
 %           spend lots of memory for memtables.
 %         - increase_parallelism(true) - see DBOptions::IncreaseParallelism()
 % @see https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide
-% @see https://github.com/EighteenZi/rocksdb_wiki/blob/master/RocksDB-Tuning-Guide.md
 % @see http://rocksdb.org/blog/2018/08/01/rocksdb-tuning-advisor.html
+% @see https://github.com/EighteenZi/rocksdb_wiki/blob/master/RocksDB-Tuning-Guide.md
 
 %
 % @bug You must call rocks_close(Directory) to ensure clean shutdown
