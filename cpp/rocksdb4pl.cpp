@@ -1037,7 +1037,7 @@ lookup_write_optdef_and_apply(rocksdb::WriteOptions *options,
 static void
 options_set_InfoLogLevel(rocksdb::Options *options, PlTerm arg)
 { InfoLogLevel log_level;
-  const auto arg_a = static_cast<PlAtom>(arg);
+  const auto arg_a = arg.as_atom();
        if ( arg_a == ATOM_debug  ) log_level = DEBUG_LEVEL;
   else if ( arg_a == ATOM_info   ) log_level = INFO_LEVEL;
   else if ( arg_a == ATOM_warn   ) log_level = WARN_LEVEL;
@@ -1672,7 +1672,7 @@ PREDICATE(rocks_property, 3)
   { uint64_t value;
 
     return ref->db->GetIntProperty("rocksdb.estimate-num-keys", &value) &&
-             A3.unify_uint64(value);
+             A3.unify_integer(value);
   } else
      throw PlDomainError("rocks_property", A2);
 }

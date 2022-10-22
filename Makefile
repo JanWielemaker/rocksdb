@@ -46,7 +46,7 @@ $(PACKSODIR)/rocksdb4pl.$(SOEXT): cpp/rocksdb4pl.cpp $(LIBROCKSDB) Makefile
 install::
 
 check::
-	swipl $(PLPATHS) -g test_rocksdb -t halt test/test_rocksdb.pl
+	$(SWIPL) $(PLPATHS) -g test_rocksdb -t halt test/test_rocksdb.pl
 
 distclean: clean
 	rm -f $(PACKSODIR)/rocksdb4pl.$(SOEXT)
