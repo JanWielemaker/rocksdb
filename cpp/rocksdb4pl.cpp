@@ -260,8 +260,8 @@ static PL_blob_t rocks_blob =
   nullptr,
   write_rocks_ref,
   nullptr,
-  save_rocks, // TODO: needs to be implemented
-  load_rocks  // TODO: needs to be implemented
+  save_rocks, // TODO: implement
+  load_rocks  // TODO: implement
 };
 
 
@@ -367,6 +367,7 @@ public:
     float   f32;
     double  f64;
   } v;
+  std::string str_; // backing store if needed for PlSlice::data_
 
   void clear()
   { if ( must_free )
@@ -386,52 +387,52 @@ public:
 #define CVT_IN	(CVT_ATOM|CVT_STRING|CVT_LIST)
 
 static void
-get_slice(PlTerm t, PlSlice &s, blob_type type)
-{ char *str;
-  size_t len;
-
-  switch(type)
+get_slice(PlTerm t, PlSlice *s, blob_type type)
+{ switch(type)
   { case BLOB_ATOM:
     case BLOB_STRING:
-      t.nchars(&len, &str, CVT_IN|CVT_EXCEPTION|REP_UTF8);
-      s.data_ = str;
-      s.size_ = len;
+      s->str_ = t.get_nchars(CVT_IN|CVT_EXCEPTION|REP_UTF8);
+      s->data_ = s->str_.data();
+      s->size_ = s->str_.size();
       return;
     case BLOB_BINARY:
-      t.nchars(&len, &str, CVT_IN|CVT_EXCEPTION);
-      s.data_ = str;
-      s.size_ = len;
+      s->str_ = t.get_nchars(CVT_IN|CVT_EXCEPTION);
+      s->data_ = s->str_.data();
+      s->size_ = s->str_.size();
       return;
     case BLOB_INT32:
-      t.integer(&s.v.i32);
-      s.data_ = reinterpret_cast<const char *>(&s.v.i32);
-      s.size_ = sizeof s.v.i32;
+      t.integer(&s->v.i32);
+      s->data_ = reinterpret_cast<const char *>(&s->v.i32);
+      s->size_ = sizeof s->v.i32;
       return;
     case BLOB_INT64:
-      t.integer(&s.v.i64);
-      s.data_ = reinterpret_cast<const char *>(&s.v.i64);
-      s.size_ = sizeof s.v.i64;
+      t.integer(&s->v.i64);
+      s->data_ = reinterpret_cast<const char *>(&s->v.i64);
+      s->size_ = sizeof s->v.i64;
       return;
     case BLOB_FLOAT32:
       { double d = t.as_float();
-        s.v.f32 = static_cast<float>(d);
-	s.data_ = reinterpret_cast<const char *>(&s.v.f32);
-	s.size_ = sizeof s.v.f32 ;
-	return;
+	s->v.f32 = static_cast<float>(d);
+	s->data_ = reinterpret_cast<const char *>(&s->v.f32);
+	s->size_ = sizeof s->v.f32 ;
       }
+      return;
     case BLOB_FLOAT64:
-      s.v.f64 = t.as_float();
-      s.data_ = reinterpret_cast<const char*>(&s.v.f64);
-      s.size_ = sizeof s.v.f64;
+      s->v.f64 = t.as_float();
+      s->data_ = reinterpret_cast<const char*>(&s->v.f64);
+      s->size_ = sizeof s->v.f64;
       return;
     case BLOB_TERM:
-      if ( (str=PL_record_external(t.C_, &len)) )
-      { s.data_ = str;
-	s.size_ = len;
-	s.must_free = TRUE;
-	return;
+      { size_t len;
+	char *str;
+	if ( (str=PL_record_external(t.C_, &len)) )
+	{ s->data_ = str;
+	  s->size_ = len;
+	  s->must_free = TRUE;
+	  return;
+	}
       }
-      throw PlException(PlTerm::exception(0));
+      throw PlException_qid();
     default:
       assert(0);
   }
@@ -595,7 +596,7 @@ static const PlAtom ATOM_full("full");
 
 static bool
 log_exception(Logger* logger)
-{ PlException ex(PlTerm::exception(0));
+{ PlException_qid ex;
 
   Log(logger, "%s", ex.as_string(EncUTF8).c_str());
   return false;
@@ -608,11 +609,11 @@ public:
   engine()
   { if ( PL_thread_self() == -1 )
     { if ( (tid=PL_thread_attach_engine(nullptr)) < 0 )
-    { auto ex = PlTerm::exception(0);
-      if ( ex.not_null() )
-        throw PlException(ex);
-      else
-        throw PlResourceError("memory");
+      { PlException_qid ex;
+        if ( ex.not_null() )
+          throw ex;
+        else
+          throw PlResourceError("memory");
       }
     }
   }
@@ -636,7 +637,7 @@ call_merger(const dbref *ref, PlTermv av, std::string* new_value,
     if ( q.next_solution() )
     { PlSlice answer;
 
-      get_slice(av[5], answer, ref->type.value);
+      get_slice(av[5], &answer, ref->type.value);
       new_value->assign(answer.data(), answer.size());
       return true;
     } else
@@ -719,9 +720,9 @@ cmp_int32(const void *v1, const void *v2)
 
 
 void
-sort(std::string &str, blob_type type) // TODO: std:string *str  DO NOT SUBMIT
-{ auto s = const_cast<char *>(str.c_str());
-  auto len = str.length();
+sort(std::string *str, blob_type type)
+{ auto s = const_cast<char *>(str->c_str());
+  auto len = str->length();
 
   if ( len > 0 )
   { switch(type)
@@ -737,7 +738,7 @@ sort(std::string &str, blob_type type) // TODO: std:string *str  DO NOT SUBMIT
 	{ if ( *ip != cv )
 	    *op++ = cv = *ip;
 	}
-	str.resize(static_cast<size_t>((reinterpret_cast<char *>(op) - s)));
+	str->resize(static_cast<size_t>((reinterpret_cast<char *>(op) - s)));
 	break;
       }
       case BLOB_INT64:
@@ -752,7 +753,7 @@ sort(std::string &str, blob_type type) // TODO: std:string *str  DO NOT SUBMIT
 	{ if ( *ip != cv )
 	    *op++ = cv = *ip;
 	}
-	str.resize(static_cast<size_t>(reinterpret_cast<char *>(op) - s));
+	str->resize(static_cast<size_t>(reinterpret_cast<char *>(op) - s));
 	break;
       }
       case BLOB_FLOAT32:
@@ -767,7 +768,7 @@ sort(std::string &str, blob_type type) // TODO: std:string *str  DO NOT SUBMIT
 	{ if ( *ip != cv )
 	    *op++ = cv = *ip;
 	}
-	str.resize(static_cast<size_t>(reinterpret_cast<char *>(op) - s));
+	str->resize(static_cast<size_t>(reinterpret_cast<char *>(op) - s));
 	break;
       }
       case BLOB_FLOAT64:
@@ -782,7 +783,7 @@ sort(std::string &str, blob_type type) // TODO: std:string *str  DO NOT SUBMIT
 	{ if ( *ip != cv )
 	    *op++ = cv = *ip;
 	}
-	str.resize(static_cast<size_t>(reinterpret_cast<char *>(op) - s));
+	str->resize(static_cast<size_t>(reinterpret_cast<char *>(op) - s));
 	break;
       }
       default:
@@ -818,7 +819,7 @@ public:
     }
 
     if ( ref->builtin_merger == MERGE_SET )
-      sort(s, ref->type.value);
+      sort(&s, ref->type.value);
     *new_value = s;
     return true;
   }
@@ -835,7 +836,7 @@ public:
     s += right_operand.ToString();
 
     if ( ref->builtin_merger == MERGE_SET )
-      sort(s, ref->type.value);
+      sort(&s, ref->type.value);
     *new_value = s;
     return true;
   }
@@ -1385,12 +1386,12 @@ PREDICATE(rocks_put, 4)
   PlSlice key;
 
   get_rocks(A1, &ref);
-  get_slice(A2, key,   ref->type.key);
+  get_slice(A2, &key, ref->type.key);
 
   if ( ref->builtin_merger == MERGE_NONE )
   { PlSlice value;
 
-    get_slice(A3, value, ref->type.value);
+    get_slice(A3, &value, ref->type.value);
     ok(ref->db->Put(write_options(A4), key, value));
   } else
   { PlTerm_tail list(A3);
@@ -1399,13 +1400,13 @@ PREDICATE(rocks_put, 4)
     PlSlice s;
 
     while(list.next(tmp))
-    { get_slice(tmp, s, ref->type.value);
+    { get_slice(tmp, &s, ref->type.value);
       value += s.ToString();
       s.clear();
     }
 
     if ( ref->builtin_merger == MERGE_SET )
-      sort(value, ref->type.value);
+      sort(&value, ref->type.value);
 
     ok(ref->db->Put(write_options(A4), key, value));
   }
@@ -1421,8 +1422,8 @@ PREDICATE(rocks_merge, 4)
   if ( !ref->merger && ref->builtin_merger == MERGE_NONE )
     throw PlPermissionError("merge", "rocksdb", A1);
 
-  get_slice(A2, key,   ref->type.key);
-  get_slice(A3, value, ref->type.value);
+  get_slice(A2, &key,   ref->type.key);
+  get_slice(A3, &value, ref->type.value);
 
   ok(ref->db->Merge(write_options(A4), key, value));
 
@@ -1452,7 +1453,7 @@ PREDICATE(rocks_get, 4)
   std::string value;
 
   get_rocks(A1, &ref);
-  get_slice(A2, key, ref->type.key);
+  get_slice(A2, &key, ref->type.key);
 
   return ( ok(ref->db->Get(read_options(A4), key, &value)) &&
 	   unify_value(A3, value, ref->builtin_merger, ref->type.value) );
@@ -1463,7 +1464,7 @@ PREDICATE(rocks_delete, 3)
   PlSlice key;
 
   get_rocks(A1, &ref);
-  get_slice(A2, key, ref->type.key);
+  get_slice(A2, &key, ref->type.key);
 
   return ok(ref->db->Delete(write_options(A3), key));
 }
@@ -1551,19 +1552,16 @@ rocks_enum(PlTermv PL_av, int ac, enum_type type, control_t handle, ReadOptions 
   { case PL_FIRST_CALL:
       get_rocks(A1, &state->ref);
       if ( ac >= 4 )
-      { char *prefix;
-	size_t len;
-
-	if ( !(state->ref->type.key == BLOB_ATOM ||
+      { if ( !(state->ref->type.key == BLOB_ATOM ||
 	       state->ref->type.key == BLOB_STRING ||
 	       state->ref->type.key == BLOB_BINARY) )
 	  throw PlPermissionError("enum", "rocksdb", A1);
 
-	A4.nchars(&len, &prefix, REP_UTF8|CVT_IN|CVT_EXCEPTION);
+        std::string prefix = A4.get_nchars(REP_UTF8|CVT_IN|CVT_EXCEPTION);
 
 	if ( type == ENUM_PREFIX )
-	{ state->prefix.length = len;
-	  state->prefix.string = prefix;
+        { state->prefix.length = prefix.size();
+	  state->prefix.string = prefix.data();
 	}
 	state->it = state->ref->db->NewIterator(options);
 	state->it->Seek(prefix);
@@ -1630,13 +1628,13 @@ batch_operation(const dbref *ref, WriteBatch &batch, PlTerm e)
   if ( ATOM_delete == name && arity == 1 )
   { PlSlice key;
 
-    get_slice(e[1], key, ref->type.key);
+    get_slice(e[1], &key, ref->type.key);
     batch.Delete(key);
   } else if ( ATOM_put == name && arity == 2 )
   { PlSlice key, value;
 
-    get_slice(e[1], key,   ref->type.key);
-    get_slice(e[2], value, ref->type.value);
+    get_slice(e[1], &key,   ref->type.key);
+    get_slice(e[2], &value, ref->type.value);
     batch.Put(key, value);
   } else
   { throw PlDomainError("rocks_batch_operation", e);

@@ -10,6 +10,8 @@ ROCKSENV=ROCKSDB_DISABLE_JEMALLOC=1 ROCKSDB_DISABLE_TCMALLOC=1
 # DEBUG_LEVEL=0 implies -O2 without assertions and debug code
 ROCKSCFLAGS=EXTRA_CXXFLAGS=-fPIC EXTRA_CFLAGS=-fPIC USE_RTTI=1 DEBUG_LEVEL=0
 PLPATHS=-p library=prolog -p foreign="$(PACKSODIR)"
+SWIPL ?= swipl
+SUBMODULE_UPDATE ?= git submodule update --init rocksdb
 
 # sets PLATFORM_LDFLAGS
 -include rocksdb/make_config.mk
@@ -19,7 +21,7 @@ all:	plugin
 .PHONY: FORCE all clean install check distclean realclean shared_object plugin
 
 rocksdb/INSTALL.md: FORCE
-	# git submodule update --init rocksdb
+	$(SUBMODULE_UPDATE)
 
 # Run the build for librocksdb in parallel, using # processors as
 # limit, if using GNU make
