@@ -22,7 +22,7 @@ we need the library. This requires   significant  disk space (1.4Gb) and
 takes long (several minutes on a modern machine).
 
 This code depends on version 2 of the `SWI-cpp.h` file that is part of
-SWI-Prolog version 8.5.16 and later.
+SWI-Prolog version 9.1.0 and later.
 
 #### Why are you not using the pre-built librocksdb?
 

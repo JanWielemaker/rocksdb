@@ -1,12 +1,17 @@
 #COFLAGS=-gdwarf-2 -g3
 # The following flags are the same as rocksdb uses, except that rocksdb also has -Werror
-# TODO: add -Werror
-CPPFLAGS=-Wall -Wextra -Wsign-compare -Wshadow -Wunused-parameter -Woverloaded-virtual -Wnon-virtual-dtor -Wno-missing-field-initializers -Wno-invalid-offsetof  -std=c++17 -O2 $(CFLAGS) $(COFLAGS) $(LDSOFLAGS) -Irocksdb/include
+# and doesn't have the conversion flags in ADDED_CPPFLAGS
+# TODO: Add -Werror
+# TODO: Options that work with clang
+ADDED_CPPFLAGS=-Wconversion -Warith-conversion -Wsign-conversion -Wfloat-conversion -Wno-unused-parameter
+CPPFLAGS=-Wall -Wextra -Wsign-compare -Wshadow -Wunused-parameter -Woverloaded-virtual -Wnon-virtual-dtor -Wno-missing-field-initializers -Wno-invalid-offsetof $(ADDED_CPPFLAGS) -std=c++17 -O2 $(CFLAGS) $(COFLAGS) $(LDSOFLAGS) -Irocksdb/include
 LIBROCKSDB=rocksdb/librocksdb.a
 ROCKSENV=ROCKSDB_DISABLE_JEMALLOC=1 ROCKSDB_DISABLE_TCMALLOC=1
 # DEBUG_LEVEL=0 implies -O2 without assertions and debug code
 ROCKSCFLAGS=EXTRA_CXXFLAGS=-fPIC EXTRA_CFLAGS=-fPIC USE_RTTI=1 DEBUG_LEVEL=0
 PLPATHS=-p library=prolog -p foreign="$(PACKSODIR)"
+SWIPL ?= swipl
+SUBMODULE_UPDATE ?= git submodule update --init rocksdb
 
 # sets PLATFORM_LDFLAGS
 -include rocksdb/make_config.mk
@@ -16,7 +21,7 @@ all:	plugin
 .PHONY: FORCE all clean install check distclean realclean shared_object plugin
 
 rocksdb/INSTALL.md: FORCE
-	git submodule update --init rocksdb
+	$(SUBMODULE_UPDATE)
 
 # Run the build for librocksdb in parallel, using # processors as
 # limit, if using GNU make
@@ -31,6 +36,7 @@ shared_object: $(PACKSODIR)/rocksdb4pl.$(SOEXT)
 
 $(PACKSODIR)/rocksdb4pl.$(SOEXT): cpp/rocksdb4pl.cpp $(LIBROCKSDB) Makefile
 	mkdir -p $(PACKSODIR)
+	$(CXX) --version
 	@# For development:
 	@#   PACKSODIR=/tmp/rocksdb-so
 	@#   SOEXT=so
@@ -42,7 +48,7 @@ $(PACKSODIR)/rocksdb4pl.$(SOEXT): cpp/rocksdb4pl.cpp $(LIBROCKSDB) Makefile
 install::
 
 check::
-	swipl $(PLPATHS) -g test_rocksdb -t halt test/test_rocksdb.pl
+	$(SWIPL) $(PLPATHS) -g test_rocksdb -t halt test/test_rocksdb.pl
 
 distclean: clean
 	rm -f $(PACKSODIR)/rocksdb4pl.$(SOEXT)
