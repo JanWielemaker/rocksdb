@@ -39,6 +39,7 @@
 #include <rocksdb/env.h>
 #include <rocksdb/write_batch.h>
 #include <rocksdb/merge_operator.h>
+#include <rocksdb/statistics.h>
 #define PL_ARITY_AS_SIZE 1
 #include <SWI-Stream.h>
 #include <SWI-Prolog.h>
