@@ -595,7 +595,7 @@ static bool
 log_exception(Logger* logger)
 { PlTerm_term_t ex(Plx_exception(0));
 
-  Log(logger, "%s", ex.as_string(EncUTF8).c_str());
+  Log(logger, "%s", ex.as_string(PlEncoding::UTF8).c_str());
   return false;
 }
 
@@ -642,7 +642,7 @@ call_merger(const dbref *ref, PlTermv av, std::string* new_value,
       return false;
     }
   } catch(PlException &ex)
-    { Log(logger, "%s", ex.as_string(EncUTF8).c_str());
+    { Log(logger, "%s", ex.as_string(PlEncoding::UTF8).c_str());
     return false;
   }
 }
@@ -1090,9 +1090,9 @@ static Optdef optdefs[] =
     options->use_fsync                               = arg.as_bool(); }, PlAtom(PlAtom::null) },
   // "db_paths" - vector<DbPath>
   {         "db_log_dir",                              ODEF {
-    options->db_log_dir                              = arg.as_string(EncLocale); }, PlAtom(PlAtom::null) },
+    options->db_log_dir                              = arg.as_string(PlEncoding::Locale); }, PlAtom(PlAtom::null) },
   {         "wal_dir",                                 ODEF {
-    options->wal_dir                                 = arg.as_string(EncLocale); }, PlAtom(PlAtom::null) },
+    options->wal_dir                                 = arg.as_string(PlEncoding::Locale); }, PlAtom(PlAtom::null) },
   {         "delete_obsolete_files_period_micros",     ODEF {
     options->delete_obsolete_files_period_micros     = arg.as_uint64_t(); }, PlAtom(PlAtom::null) },
   {         "max_background_jobs",                     ODEF {
@@ -1227,7 +1227,7 @@ static Optdef optdefs[] =
   {         "allow_data_in_errors",                    ODEF {
     options->allow_data_in_errors                    = arg.as_bool(); }, PlAtom(PlAtom::null) },
   {         "db_host_id",                              ODEF {
-      options->db_host_id                            = arg.as_string(EncLocale); }, PlAtom(PlAtom::null) },
+      options->db_host_id                            = arg.as_string(PlEncoding::Locale); }, PlAtom(PlAtom::null) },
   // "checksum_handoff_file_types" - FileTypeSet
 
   { nullptr, nullptr, PlAtom(PlAtom::null) }
