@@ -80,7 +80,7 @@ typedef struct dbref
   PlAtom	 name;			/* alias name */
   int	         flags;			/* flags */
   merger_t	 builtin_merger;	/* C++ Merger */
-  record_t	 merger;		/* merge option */
+  PlRecordRaw	 merger;		/* merge option */
   struct
   { blob_type key;
     blob_type value;
@@ -93,7 +93,7 @@ static dbref null_dbref =
   PlAtom(PlAtom::null),	// PlAtom	 name;
   0,		// int	         flags;
   MERGE_NONE,	// merger_t	 builtin_merger;
-  nullptr,	// record_t	 merger;
+  PlRecordRaw(PlRecordRaw::null), // PlRexordRaw merger;
   { BLOB_ATOM,	//   blob_type	   key;
     BLOB_ATOM	//   blob_type	   value;
   }
@@ -216,10 +216,7 @@ release_rocks_ref_(PlAtom aref)
       delete db;
     }
   }
-  if ( ref->merger )
-  { Plx_erase(ref->merger);
-    ref->merger = 0;
-  }
+  ref->merger.erase();
   Plx_free(ref);
 
   return true;
@@ -617,7 +614,7 @@ public:
 
   ~engine()
   { if ( tid )
-      PL_thread_destroy_engine();
+      Plx_thread_destroy_engine();
   }
 };
 
@@ -667,13 +664,13 @@ public:
     PlTerm_var tmp;
 
     for (const auto& value : operand_list)
-    { PlCheckFail(PL_put_variable(tmp.C_));
+    { Plx_put_variable(tmp.C_);
       unify(tmp, value, ref->type.value);
       PlCheckFail(list.append(tmp));
     }
     PlCheckFail(list.close());
 
-    if ( PL_recorded(ref->merger, av[0].C_) &&
+    if ( av[0].unify_term(ref->merger.term()) &&
 	 av[1].unify_atom(ATOM_full) &&
 	 unify(av[2], key, ref->type.key) &&
 	 unify(av[3], existing_value, ref->type.value) )
@@ -691,7 +688,7 @@ public:
   { engine e;
     PlTermv av(6);
 
-    if ( PL_recorded(ref->merger, av[0].C_) &&
+    if ( av[0].unify_term(ref->merger.term()) &&
 	 av[1].unify_atom(ATOM_partial) &&
 	 unify(av[2], key, ref->type.key) &&
 	 unify(av[3], left_operand, ref->type.value) &&
@@ -1258,11 +1255,11 @@ PREDICATE(rocks_open_, 3)
   blob_type value_type = BLOB_ATOM;
   merger_t builtin_merger = MERGE_NONE;
   PlAtom alias(PlAtom::null);
-  record_t merger = 0;
+  PlRecordRaw merger(PlRecordRaw::null);
   int once = false;
   int read_only = false;
 
-  if ( !PL_get_file_name(A1.C_, &fn, PL_FILE_OSPATH) )
+  if ( !Plx_get_file_name(A1.C_, &fn, PL_FILE_OSPATH) )
     return false;
   PlTerm_tail tail(A3);
   PlTerm_var opt;
@@ -1277,7 +1274,7 @@ PREDICATE(rocks_open_, 3)
       else if ( ATOM_value == name )
 	get_blob_type(opt[1], &value_type, &builtin_merger);
       else if ( ATOM_merge == name )
-	merger = PL_record(opt[1].C_);
+	merger = opt[1].record_raw();
       else if ( ATOM_alias == name )
       { alias = opt[1].as_atom();
 	once = true;
@@ -1311,7 +1308,7 @@ PREDICATE(rocks_open_, 3)
     }
   }
 
-  dbref *ref = static_cast<dbref *>(PL_malloc(sizeof *ref));
+  dbref *ref = static_cast<dbref *>(Plx_malloc(sizeof *ref));
   *ref = null_dbref;
   ref->merger         = merger;
   ref->builtin_merger = builtin_merger;
@@ -1324,7 +1321,7 @@ PREDICATE(rocks_open_, 3)
   try
   { rocksdb::Status status;
 
-    if ( ref->merger )
+    if ( ref->merger.not_null() )
       options.merge_operator.reset(new PrologMergeOperator(ref));
     else if ( builtin_merger != MERGE_NONE )
       options.merge_operator.reset(new ListMergeOperator(ref));
@@ -1335,7 +1332,7 @@ PREDICATE(rocks_open_, 3)
     ok(status);
     return unify_rocks(A2, ref);
   } catch(...)
-  { PL_free(ref);
+  { Plx_free(ref);
     throw;
   }
 }
@@ -1416,7 +1413,7 @@ PREDICATE(rocks_merge, 4)
   PlSlice key, value;
 
   get_rocks(A1, &ref);
-  if ( !ref->merger && ref->builtin_merger == MERGE_NONE )
+  if ( ref->merger.is_null() && ref->builtin_merger == MERGE_NONE )
     throw PlPermissionError("merge", "rocksdb", A1);
 
   get_slice(A2, &key,   ref->type.key);
