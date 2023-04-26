@@ -80,7 +80,7 @@ typedef struct dbref
   PlAtom	 name;			/* alias name */
   int	         flags;			/* flags */
   merger_t	 builtin_merger;	/* C++ Merger */
-  PlRecordRaw	 merger;		/* merge option */
+  PlRecord	 merger;		/* merge option */
   struct
   { blob_type key;
     blob_type value;
@@ -93,7 +93,7 @@ static dbref null_dbref =
   PlAtom(PlAtom::null),	// PlAtom	 name;
   0,		// int	         flags;
   MERGE_NONE,	// merger_t	 builtin_merger;
-  PlRecordRaw(PlRecordRaw::null), // PlRexordRaw merger;
+  PlRecord(PlRecord::null), // PlRexordRaw merger;
   { BLOB_ATOM,	//   blob_type	   key;
     BLOB_ATOM	//   blob_type	   value;
   }
@@ -1255,7 +1255,7 @@ PREDICATE(rocks_open_, 3)
   blob_type value_type = BLOB_ATOM;
   merger_t builtin_merger = MERGE_NONE;
   PlAtom alias(PlAtom::null);
-  PlRecordRaw merger(PlRecordRaw::null);
+  PlRecord merger(PlRecord::null);
   int once = false;
   int read_only = false;
 
@@ -1274,7 +1274,7 @@ PREDICATE(rocks_open_, 3)
       else if ( ATOM_value == name )
 	get_blob_type(opt[1], &value_type, &builtin_merger);
       else if ( ATOM_merge == name )
-	merger = opt[1].record_raw();
+	merger = opt[1].record();
       else if ( ATOM_alias == name )
       { alias = opt[1].as_atom();
 	once = true;
