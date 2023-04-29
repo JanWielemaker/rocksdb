@@ -39,10 +39,14 @@
 #include <rocksdb/env.h>
 #include <rocksdb/write_batch.h>
 #include <rocksdb/merge_operator.h>
+#include <rocksdb/statistics.h>
 #define PL_ARITY_AS_SIZE 1
 #include <SWI-Stream.h>
 #include <SWI-Prolog.h>
 #include <SWI-cpp2.h>
+
+#include <SWI-cpp2.cpp> // TODO: this  should possibly be separate
+
 
 using namespace rocksdb;
 
@@ -76,7 +80,7 @@ typedef struct dbref
   PlAtom	 name;			/* alias name */
   int	         flags;			/* flags */
   merger_t	 builtin_merger;	/* C++ Merger */
-  record_t	 merger;		/* merge option */
+  PlRecord	 merger;		/* merge option */
   struct
   { blob_type key;
     blob_type value;
@@ -89,7 +93,7 @@ static dbref null_dbref =
   PlAtom(PlAtom::null),	// PlAtom	 name;
   0,		// int	         flags;
   MERGE_NONE,	// merger_t	 builtin_merger;
-  nullptr,	// record_t	 merger;
+  PlRecord(PlRecord::null), // PlRexordRaw merger;
   { BLOB_ATOM,	//   blob_type	   key;
     BLOB_ATOM	//   blob_type	   value;
   }
@@ -212,11 +216,8 @@ release_rocks_ref_(PlAtom aref)
       delete db;
     }
   }
-  if ( ref->merger )
-  { PL_erase(ref->merger);
-    ref->merger = 0;
-  }
-  PL_free(ref);
+  ref->merger.erase();
+  Plx_free(ref);
 
   return true;
 }
@@ -270,7 +271,7 @@ unify_rocks(PlTerm t, dbref *ref)
 { if ( ref->name.not_null() )
   { if ( ref->symbol.is_null() )
     { PlTerm_var tmp;
-      PlCheck(tmp.unify_blob(&ref, sizeof ref, &rocks_blob));
+      PlCheckFail(tmp.unify_blob(&ref, sizeof ref, &rocks_blob));
       ref->symbol = t.as_atom();
       rocks_alias(ref->name, ref->symbol);
     }
@@ -278,7 +279,7 @@ unify_rocks(PlTerm t, dbref *ref)
   } else if ( ref->symbol.not_null() )
   { return t.unify_atom(ref->symbol);
   } else return ( t.unify_blob(&ref, sizeof ref, &rocks_blob) &&
-                  t.get_if_atom(&ref->symbol) );
+		  t.get_atom(&ref->symbol) );
 }
 
 
@@ -304,7 +305,7 @@ get_rocks(PlTerm t, dbref **erp, bool warn=true)
   if ( warn )
     a = t.as_atom();
   else
-    (void)t.get_if_atom(&a);
+    (void)t.get_atom(&a); // TODO: get_atom_ex(&a);
   if ( t.not_null() )
   { for(int i=0; i<2 && a.not_null(); i++)
     { dbref *ref;
@@ -314,7 +315,7 @@ get_rocks(PlTerm t, dbref **erp, bool warn=true)
 	{ *erp = ref;
 	  return true;
 	} else if ( warn )
-        { throw PlExistenceError("rocksdb", t);
+	{ throw PlExistenceError("rocksdb", t);
 	}
       }
 
@@ -371,7 +372,7 @@ public:
 
   void clear()
   { if ( must_free )
-      PL_erase_external(const_cast<char *>(data_));
+      Plx_erase_external(const_cast<char *>(data_));
     must_free = 0;
     data_ = nullptr;
     size_ = 0;
@@ -379,7 +380,7 @@ public:
 
   ~PlSlice()
   { if ( must_free )
-      PL_erase_external(const_cast<char *>(data_));
+      Plx_erase_external(const_cast<char *>(data_));
   }
 };
 
@@ -424,15 +425,13 @@ get_slice(PlTerm t, PlSlice *s, blob_type type)
       return;
     case BLOB_TERM:
       { size_t len;
-	char *str;
-	if ( (str=PL_record_external(t.C_, &len)) )
-	{ s->data_ = str;
-	  s->size_ = len;
-	  s->must_free = TRUE;
-	  return;
-	}
+	char *str = Plx_record_external(t.C_, &len);
+	s->data_ = str;
+	s->size_ = len;
+	s->must_free = TRUE;
+	return;
       }
-      throw PlException_qid();
+      break;
     default:
       assert(0);
   }
@@ -479,9 +478,8 @@ unify(PlTerm t, const Slice &s, blob_type type)
     case BLOB_TERM:
     { PlTerm_var tmp;
 
-      return ( PL_recorded_external(s.data_, tmp.C_) &&
-	       tmp.unify_term(t)
-	     );
+      Plx_recorded_external(s.data_, tmp.C_);
+      return tmp.unify_term(t);
     }
     default:
       assert(0);
@@ -538,37 +536,33 @@ unify_value(PlTerm t, const Slice &s, merger_t merge, blob_type type)
 	{ int i;
 	  memcpy(&i, data, sizeof i);
 	  data += sizeof i;
-	  if ( !PL_put_integer(tmp.C_, i) )
-            return false;
+	  Plx_put_integer(tmp.C_, i);
 	}
-        break;
+	break;
 	case BLOB_INT64:
 	{ int64_t i;
 	  memcpy(&i, data, sizeof i);
 	  data += sizeof i;
-	  if ( !PL_put_int64(tmp.C_, i) )
-            return false;
+	  Plx_put_int64(tmp.C_, i);
 	}
-        break;
+	break;
 	case BLOB_FLOAT32:
 	{ float i;
 	  memcpy(&i, data, sizeof i);
 	  data += sizeof i;
-	  if ( !PL_put_float(tmp.C_, i) )
-            return false;
+	  Plx_put_float(tmp.C_, i);
 	}
-        break;
+	break;
 	case BLOB_FLOAT64:
 	{ double i;
 	  memcpy(&i, data, sizeof i);
 	  data += sizeof i;
-	  if ( !PL_put_float(tmp.C_, i) )
-            return false;
+	  Plx_put_float(tmp.C_, i);
 	}
-        break;
+	break;
 	default:
 	  assert(0);
-          return false;
+	  return false;
       }
 
       if ( !list.append(tmp) )
@@ -596,9 +590,9 @@ static const PlAtom ATOM_full("full");
 
 static bool
 log_exception(Logger* logger)
-{ PlException_qid ex;
+{ PlTerm_term_t ex(Plx_exception(0));
 
-  Log(logger, "%s", ex.as_string(EncUTF8).c_str());
+  Log(logger, "%s", ex.as_string(PlEncoding::UTF8).c_str());
   return false;
 }
 
@@ -607,20 +601,20 @@ class engine
 
 public:
   engine()
-  { if ( PL_thread_self() == -1 )
-    { if ( (tid=PL_thread_attach_engine(nullptr)) < 0 )
-      { PlException_qid ex;
-        if ( ex.not_null() )
-          throw ex;
-        else
-          throw PlResourceError("memory");
+  { if ( Plx_thread_self() == -1 )
+    { if ( (tid=Plx_thread_attach_engine(nullptr)) < 0 )
+      { PlTerm_term_t ex(Plx_exception(0));
+	if ( ex.not_null() )
+	  throw PlException(ex);
+	else
+	  throw PlResourceError("memory");
       }
     }
   }
 
   ~engine()
   { if ( tid )
-      PL_thread_destroy_engine();
+      Plx_thread_destroy_engine();
   }
 };
 
@@ -645,7 +639,7 @@ call_merger(const dbref *ref, PlTermv av, std::string* new_value,
       return false;
     }
   } catch(PlException &ex)
-    { Log(logger, "%s", ex.as_string(EncUTF8).c_str());
+    { Log(logger, "%s", ex.as_string(PlEncoding::UTF8).c_str());
     return false;
   }
 }
@@ -670,13 +664,13 @@ public:
     PlTerm_var tmp;
 
     for (const auto& value : operand_list)
-    { PlCheck(PL_put_variable(tmp.C_));
+    { Plx_put_variable(tmp.C_);
       unify(tmp, value, ref->type.value);
-      PlCheck(list.append(tmp));
+      PlCheckFail(list.append(tmp));
     }
-    PlCheck(list.close());
+    PlCheckFail(list.close());
 
-    if ( PL_recorded(ref->merger, av[0].C_) &&
+    if ( av[0].unify_term(ref->merger.term()) &&
 	 av[1].unify_atom(ATOM_full) &&
 	 unify(av[2], key, ref->type.key) &&
 	 unify(av[3], existing_value, ref->type.value) )
@@ -694,7 +688,7 @@ public:
   { engine e;
     PlTermv av(6);
 
-    if ( PL_recorded(ref->merger, av[0].C_) &&
+    if ( av[0].unify_term(ref->merger.term()) &&
 	 av[1].unify_atom(ATOM_partial) &&
 	 unify(av[2], key, ref->type.key) &&
 	 unify(av[3], left_operand, ref->type.value) &&
@@ -888,12 +882,12 @@ get_blob_type(PlTerm t, blob_type *key_type, merger_t *m)
 
   if ( m && t.is_functor(FUNCTOR_list1) )
   { *m = MERGE_LIST;
-    rc = t[1].get_if_atom(&a);
+    rc = t[1].get_atom(&a);
   } else if ( m && t.is_functor(FUNCTOR_set1) )
   { *m = MERGE_SET;
-    rc = t[1].get_if_atom(&a);
+    rc = t[1].get_atom(&a);
   } else
-    rc = t.get_if_atom(&a);
+    rc = t.get_atom(&a);
 
   if ( rc )
   { if ( !m || *m == MERGE_NONE )
@@ -903,7 +897,7 @@ get_blob_type(PlTerm t, blob_type *key_type, merger_t *m)
       else if ( ATOM_term   == a ) { *key_type = BLOB_TERM;   return; }
     }
 
-         if ( ATOM_int32  == a ) { *key_type = BLOB_INT32;   return; }
+	 if ( ATOM_int32  == a ) { *key_type = BLOB_INT32;   return; }
     else if ( ATOM_int64  == a ) { *key_type = BLOB_INT64;   return; }
     else if ( ATOM_float  == a ) { *key_type = BLOB_FLOAT32; return; }
     else if ( ATOM_double == a ) { *key_type = BLOB_FLOAT64; return; }
@@ -961,7 +955,7 @@ static ReadOptdef read_optdefs[] =
   //         "timestamp" Slice*
   // "iter_start_ts" Slice*
   {
-             "deadline",                            RD_ODEF {
+	     "deadline",                            RD_ODEF {
       options->deadline                             = static_cast<std::chrono::microseconds>(arg.as_int64_t()); }, PlAtom(PlAtom::null) },
   {         "io_timeout",                           RD_ODEF {
       options->io_timeout                           = static_cast<std::chrono::microseconds>(arg.as_int64_t()); }, PlAtom(PlAtom::null) },
@@ -1093,9 +1087,9 @@ static Optdef optdefs[] =
     options->use_fsync                               = arg.as_bool(); }, PlAtom(PlAtom::null) },
   // "db_paths" - vector<DbPath>
   {         "db_log_dir",                              ODEF {
-    options->db_log_dir                              = arg.as_string(EncLocale); }, PlAtom(PlAtom::null) },
+    options->db_log_dir                              = arg.as_string(PlEncoding::Locale); }, PlAtom(PlAtom::null) },
   {         "wal_dir",                                 ODEF {
-    options->wal_dir                                 = arg.as_string(EncLocale); }, PlAtom(PlAtom::null) },
+    options->wal_dir                                 = arg.as_string(PlEncoding::Locale); }, PlAtom(PlAtom::null) },
   {         "delete_obsolete_files_period_micros",     ODEF {
     options->delete_obsolete_files_period_micros     = arg.as_uint64_t(); }, PlAtom(PlAtom::null) },
   {         "max_background_jobs",                     ODEF {
@@ -1230,7 +1224,7 @@ static Optdef optdefs[] =
   {         "allow_data_in_errors",                    ODEF {
     options->allow_data_in_errors                    = arg.as_bool(); }, PlAtom(PlAtom::null) },
   {         "db_host_id",                              ODEF {
-      options->db_host_id                            = arg.as_string(EncLocale); }, PlAtom(PlAtom::null) },
+      options->db_host_id                            = arg.as_string(PlEncoding::Locale); }, PlAtom(PlAtom::null) },
   // "checksum_handoff_file_types" - FileTypeSet
 
   { nullptr, nullptr, PlAtom(PlAtom::null) }
@@ -1261,11 +1255,11 @@ PREDICATE(rocks_open_, 3)
   blob_type value_type = BLOB_ATOM;
   merger_t builtin_merger = MERGE_NONE;
   PlAtom alias(PlAtom::null);
-  record_t merger = 0;
+  PlRecord merger(PlRecord::null);
   int once = false;
   int read_only = false;
 
-  if ( !PL_get_file_name(A1.C_, &fn, PL_FILE_OSPATH) )
+  if ( !Plx_get_file_name(A1.C_, &fn, PL_FILE_OSPATH) )
     return false;
   PlTerm_tail tail(A3);
   PlTerm_var opt;
@@ -1273,14 +1267,14 @@ PREDICATE(rocks_open_, 3)
   { PlAtom name(PlAtom::null);
     size_t arity;
 
-    PlCheck(opt.name_arity(&name, &arity));
+    PlCheckFail(opt.name_arity(&name, &arity));
     if (  arity == 1 )
     { if ( ATOM_key == name )
 	get_blob_type(opt[1], &key_type, static_cast<merger_t *>(nullptr));
       else if ( ATOM_value == name )
 	get_blob_type(opt[1], &value_type, &builtin_merger);
       else if ( ATOM_merge == name )
-	merger = PL_record(opt[1].C_);
+	merger = opt[1].record();
       else if ( ATOM_alias == name )
       { alias = opt[1].as_atom();
 	once = true;
@@ -1291,12 +1285,12 @@ PREDICATE(rocks_open_, 3)
 	  throw PlDomainError("open_option", opt[1]);
       } else if ( ATOM_mode == name )
       { PlAtom a = opt[1].as_atom();
-        if ( ATOM_read_write == a )
+	if ( ATOM_read_write == a )
 	  read_only = false;
-        else if ( ATOM_read_only == a )
-          read_only = true;
-        else
-          throw PlDomainError("mode_option", opt[1]);
+	else if ( ATOM_read_only == a )
+	  read_only = true;
+	else
+	  throw PlDomainError("mode_option", opt[1]);
       } else
       { lookup_optdef_and_apply(&options, optdefs, name, opt);
       }
@@ -1314,7 +1308,7 @@ PREDICATE(rocks_open_, 3)
     }
   }
 
-  dbref *ref = static_cast<dbref *>(PL_malloc(sizeof *ref));
+  dbref *ref = static_cast<dbref *>(Plx_malloc(sizeof *ref));
   *ref = null_dbref;
   ref->merger         = merger;
   ref->builtin_merger = builtin_merger;
@@ -1327,7 +1321,7 @@ PREDICATE(rocks_open_, 3)
   try
   { rocksdb::Status status;
 
-    if ( ref->merger )
+    if ( ref->merger.not_null() )
       options.merge_operator.reset(new PrologMergeOperator(ref));
     else if ( builtin_merger != MERGE_NONE )
       options.merge_operator.reset(new ListMergeOperator(ref));
@@ -1338,7 +1332,7 @@ PREDICATE(rocks_open_, 3)
     ok(status);
     return unify_rocks(A2, ref);
   } catch(...)
-  { PL_free(ref);
+  { Plx_free(ref);
     throw;
   }
 }
@@ -1371,7 +1365,7 @@ write_options(PlTerm options_term)
   { PlAtom name(PlAtom::null);
     size_t arity;
 
-    PlCheck(opt.name_arity(&name, &arity));
+    PlCheckFail(opt.name_arity(&name, &arity));
     if ( arity == 1 )
     { lookup_write_optdef_and_apply(&options, write_optdefs, name, opt);
     } else
@@ -1419,7 +1413,7 @@ PREDICATE(rocks_merge, 4)
   PlSlice key, value;
 
   get_rocks(A1, &ref);
-  if ( !ref->merger && ref->builtin_merger == MERGE_NONE )
+  if ( ref->merger.is_null() && ref->builtin_merger == MERGE_NONE )
     throw PlPermissionError("merge", "rocksdb", A1);
 
   get_slice(A2, &key,   ref->type.key);
@@ -1438,7 +1432,7 @@ read_options(PlTerm options_term)
   while(tail.next(opt))
   { PlAtom name(PlAtom::null);
     size_t arity;
-    PlCheck(opt.name_arity(&name, &arity));
+    PlCheckFail(opt.name_arity(&name, &arity));
     if ( arity == 1 )
     { lookup_read_optdef_and_apply(&options, read_optdefs, name, opt);
     } else
@@ -1544,11 +1538,11 @@ enum_key_prefix(const enum_state *state)
 
 
 static foreign_t
-rocks_enum(PlTermv PL_av, int ac, enum_type type, control_t handle, ReadOptions options)
+rocks_enum(PlTermv PL_av, int ac, enum_type type, PlControl handle, ReadOptions options)
 { enum_state state_buf = {0};
   enum_state *state = &state_buf;
 
-  switch(PL_foreign_control(handle))
+  switch(handle.foreign_control())
   { case PL_FIRST_CALL:
       get_rocks(A1, &state->ref);
       if ( ac >= 4 )
@@ -1557,10 +1551,10 @@ rocks_enum(PlTermv PL_av, int ac, enum_type type, control_t handle, ReadOptions 
 	       state->ref->type.key == BLOB_BINARY) )
 	  throw PlPermissionError("enum", "rocksdb", A1);
 
-        std::string prefix = A4.get_nchars(REP_UTF8|CVT_IN|CVT_EXCEPTION);
+	std::string prefix = A4.get_nchars(REP_UTF8|CVT_IN|CVT_EXCEPTION);
 
 	if ( type == ENUM_PREFIX )
-        { state->prefix.length = prefix.size();
+	{ state->prefix.length = prefix.size();
 	  state->prefix.string = prefix.data();
 	}
 	state->it = state->ref->db->NewIterator(options);
@@ -1573,7 +1567,7 @@ rocks_enum(PlTermv PL_av, int ac, enum_type type, control_t handle, ReadOptions 
       state->saved = false;
       goto next;
     case PL_REDO:
-      state = static_cast<enum_state *>(PL_foreign_context_address(handle));
+      state = static_cast<enum_state *>(handle.foreign_context_address());
     next:
     { PlFrame fr;
       for(; state->it->Valid(); state->it->Next())
@@ -1594,7 +1588,7 @@ rocks_enum(PlTermv PL_av, int ac, enum_type type, control_t handle, ReadOptions 
       return false;
     }
     case PL_PRUNED:
-      state = static_cast<enum_state *>(PL_foreign_context_address(handle));
+      state = static_cast<enum_state *>(handle.foreign_context_address());
       free_enum_state(state);
       return true;
     default:
@@ -1624,7 +1618,7 @@ batch_operation(const dbref *ref, WriteBatch &batch, PlTerm e)
 { PlAtom name(PlAtom::null);
   size_t arity;
 
-  PlCheck(e.name_arity(&name, &arity));
+  PlCheckFail(e.name_arity(&name, &arity));
   if ( ATOM_delete == name && arity == 1 )
   { PlSlice key;
 
@@ -1670,7 +1664,7 @@ PREDICATE(rocks_property, 3)
   { uint64_t value;
 
     return ref->db->GetIntProperty("rocksdb.estimate-num-keys", &value) &&
-             A3.unify_integer(value);
+	     A3.unify_integer(value);
   } else
      throw PlDomainError("rocks_property", A2);
 }

@@ -1,6 +1,6 @@
 name(rocksdb).
 title('SWI-Prolog interface to RocksDB').
-version('0.12.0').
+version('0.13.0').
 keywords([database, embedded, nosql]).
 author('Jan Wielemaker', 'jan@swi-prolog.org').
 packager( 'Jan Wielemaker', 'jan@swi-prolog.org' ).
