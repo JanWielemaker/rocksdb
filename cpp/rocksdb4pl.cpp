@@ -296,22 +296,22 @@ symbol_dbref(PlAtom symbol)
 }
 
 
-static bool
-get_rocks(PlTerm t, dbref **erp, bool warn=true)
+[[nodiscard]]
+static dbref *
+get_rocks(PlTerm t,bool warn=true)
 { PlAtom a(PlAtom::null);
 
   if ( warn )
     a = t.as_atom();
   else
-    (void)t.get_atom(&a); // TODO: get_atom_ex(&a);
-  if ( t.not_null() )
+    t.get_atom_ex(&a);
+  if ( a.not_null() )
   { for(int i=0; i<2 && a.not_null(); i++)
     { dbref *ref;
 
       if ( (ref=symbol_dbref(a)) )
       { if ( !(ref->flags & DB_DESTROYED) )
-	{ *erp = ref;
-	  return true;
+	{ return ref;
 	} else if ( warn )
 	{ throw PlExistenceError("rocksdb", t);
 	}
@@ -323,10 +323,7 @@ get_rocks(PlTerm t, dbref **erp, bool warn=true)
     throw PlExistenceError("rocksdb", t);
   }
 
-  if ( warn )
-    throw PlTypeError("rocksdb", t);
-
-  return false;
+  throw PlExistenceError("rocksdb", t);
 }
 
 
@@ -1343,9 +1340,7 @@ PREDICATE(rocks_open_, 3)
 
 
 PREDICATE(rocks_close, 1)
-{ dbref *ref;
-
-  get_rocks(A1, &ref);
+{ dbref *ref = get_rocks(A1);
   rocksdb::DB* db = ref->db;
 
   ref->db = nullptr;
@@ -1380,9 +1375,7 @@ write_options(PlTerm options_term)
 
 
 PREDICATE(rocks_put, 4)
-{ dbref *ref;
-
-  get_rocks(A1, &ref);
+{ dbref *ref = get_rocks(A1);
   auto key = get_slice(A2, ref->type.key);
 
   if ( ref->builtin_merger == MERGE_NONE )
@@ -1408,9 +1401,7 @@ PREDICATE(rocks_put, 4)
 }
 
 PREDICATE(rocks_merge, 4)
-{ dbref *ref;
-
-  get_rocks(A1, &ref);
+{ dbref *ref = get_rocks(A1);
   if ( ref->merger.is_null() && ref->builtin_merger == MERGE_NONE )
     throw PlPermissionError("merge", "rocksdb", A1);
 
@@ -1440,10 +1431,8 @@ read_options(PlTerm options_term)
 }
 
 PREDICATE(rocks_get, 4)
-{ dbref *ref;
+{ dbref *ref = get_rocks(A1);
   std::string value;
-
-  get_rocks(A1, &ref);
   auto key = get_slice(A2, ref->type.key);
 
   return ( ok(ref->db->Get(read_options(A4), key->slice(), &value)) &&
@@ -1451,9 +1440,7 @@ PREDICATE(rocks_get, 4)
 }
 
 PREDICATE(rocks_delete, 3)
-{ dbref *ref;
-
-  get_rocks(A1, &ref);
+{ dbref *ref = get_rocks(A1);
   auto key = get_slice(A2, ref->type.key);
 
   return ok(ref->db->Delete(write_options(A3), key->slice()));
@@ -1540,7 +1527,7 @@ rocks_enum(PlTermv PL_av, int ac, enum_type type, PlControl handle, rocksdb::Rea
 
   switch ( handle.foreign_control() )
   { case PL_FIRST_CALL:
-      get_rocks(A1, &state->ref);
+      state->ref = get_rocks(A1);
       if ( ac >= 4 )
       { if ( !(state->ref->type.key == BLOB_ATOM ||
 	       state->ref->type.key == BLOB_STRING ||
@@ -1629,9 +1616,7 @@ batch_operation(const dbref *ref, rocksdb::WriteBatch &batch, PlTerm e)
 
 
 PREDICATE(rocks_batch, 3)
-{ dbref *ref;
-
-  get_rocks(A1, &ref);
+{ dbref *ref = get_rocks(A1);
   rocksdb::WriteBatch batch;
   PlTerm_tail tail(A2);
   PlTerm_var e;
@@ -1647,9 +1632,7 @@ PREDICATE(rocks_batch, 3)
 static PlAtom ATOM_estimate_num_keys("estimate_num_keys");
 
 PREDICATE(rocks_property, 3)
-{ dbref *ref;
-
-  get_rocks(A1, &ref);
+{ dbref *ref = get_rocks(A1);
 
   PlAtom prop = A2.as_atom();
   if ( ATOM_estimate_num_keys == prop )
