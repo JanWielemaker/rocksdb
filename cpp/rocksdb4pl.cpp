@@ -48,8 +48,6 @@
 #include <SWI-cpp2.cpp> // TODO: this  should possibly be separate
 
 
-using namespace rocksdb;
-
 		 /*******************************
 		 *	       SYMBOL		*
 		 *******************************/
@@ -358,7 +356,7 @@ ok(const rocksdb::Status &status)
   throw RocksError(status);
 }
 
-class PlSlice : public Slice
+class PlSlice : public rocksdb::Slice
 {
 public:
   explicit PlSlice()
@@ -450,7 +448,7 @@ static const PlAtom ATOM_("");
 
 
 static bool
-unify(PlTerm t, const Slice &s, blob_type type)
+unify(PlTerm t, const rocksdb::Slice &s, blob_type type)
 { switch(type)
   { case BLOB_ATOM:
       return t.unify_chars(PL_ATOM|REP_UTF8, s.size_, s.data_);
@@ -496,8 +494,8 @@ unify(PlTerm t, const Slice &s, blob_type type)
 }
 
 static bool
-unify(PlTerm t, const Slice *s, blob_type type)
-{ if ( s == static_cast<const Slice *>(nullptr) )
+unify(PlTerm t, const rocksdb::Slice *s, blob_type type)
+{ if ( s == static_cast<const rocksdb::Slice *>(nullptr) )
   { switch(type)
     { case BLOB_ATOM:
 	return t.unify_atom(ATOM_);
@@ -523,13 +521,13 @@ unify(PlTerm t, const Slice *s, blob_type type)
 
 static bool
 unify(PlTerm t, const std::string &s, blob_type type)
-{ Slice sl(s.data(), s.length());
+{ rocksdb::Slice sl(s.data(), s.length());
 
   return unify(t, sl, type);
 }
 
 static bool
-unify_value(PlTerm t, const Slice &s, merger_t merge, blob_type type)
+unify_value(PlTerm t, const rocksdb::Slice &s, merger_t merge, blob_type type)
 { if ( merge == MERGE_NONE )
   { return unify(t, s, type);
   } else
@@ -538,8 +536,8 @@ unify_value(PlTerm t, const Slice &s, merger_t merge, blob_type type)
     const char *data = s.data();
     const char *end  = data+s.size();
 
-    while(data < end)
-    { switch( type )
+    while ( data < end )
+    { switch ( type )
       { case BLOB_INT32:
 	{ int i;
 	  memcpy(&i, data, sizeof i);
@@ -583,7 +581,7 @@ unify_value(PlTerm t, const Slice &s, merger_t merge, blob_type type)
 
 static bool
 unify_value(PlTerm t, const std::string &s, merger_t merge, blob_type type)
-{ Slice sl(s.data(), s.length());
+{ rocksdb::Slice sl(s.data(), s.length());
 
   return unify_value(t, sl, merge, type);
 }
@@ -597,7 +595,7 @@ static const PlAtom ATOM_partial("partial");
 static const PlAtom ATOM_full("full");
 
 static bool
-log_exception(Logger* logger)
+log_exception(rocksdb::Logger* logger)
 { PlTerm_term_t ex(Plx_exception(0));
 
   Log(logger, "%s", ex.as_string(PlEncoding::UTF8).c_str());
@@ -628,7 +626,7 @@ public:
 
 static bool
 call_merger(const dbref *ref, PlTermv av, std::string* new_value,
-	    Logger* logger)
+	    rocksdb::Logger* logger)
 { static PlPredicate pred_call6(PlPredicate::null);
 
   if ( pred_call6.is_null() )
@@ -651,7 +649,7 @@ call_merger(const dbref *ref, PlTermv av, std::string* new_value,
 }
 
 
-class PrologMergeOperator : public MergeOperator
+class PrologMergeOperator : public rocksdb::MergeOperator
 { const dbref *ref;
 public:
   PrologMergeOperator(const dbref *reference) : MergeOperator()
@@ -659,11 +657,11 @@ public:
   }
 
   virtual bool
-  FullMerge(const Slice& key,
-	    const Slice* existing_value,
+  FullMerge(const rocksdb::Slice& key,
+	    const rocksdb::Slice* existing_value,
 	    const std::deque<std::string>& operand_list,
 	    std::string* new_value,
-	    Logger* logger) const override
+	    rocksdb::Logger* logger) const override
   { engine e;
     PlTermv av(6);
     PlTerm_tail list(av[4]);
@@ -686,11 +684,11 @@ public:
   }
 
   virtual bool
-  PartialMerge(const Slice& key,
-	       const Slice& left_operand,
-	       const Slice& right_operand,
+  PartialMerge(const rocksdb::Slice& key,
+	       const rocksdb::Slice& left_operand,
+	       const rocksdb::Slice& right_operand,
 	       std::string* new_value,
-	       Logger* logger) const override
+	       rocksdb::Logger* logger) const override
   { engine e;
     PlTermv av(6);
 
@@ -725,7 +723,7 @@ sort(std::string *str, blob_type type)
   auto len = str->length();
 
   if ( len > 0 )
-  { switch(type)
+  { switch ( type )
     { case BLOB_INT32:
       { auto ip = reinterpret_cast<int *>(s);
 	auto op = ip+1;
@@ -794,7 +792,7 @@ sort(std::string *str, blob_type type)
 }
 
 
-class ListMergeOperator : public MergeOperator
+class ListMergeOperator : public rocksdb::MergeOperator
 { const dbref *ref;
 public:
   ListMergeOperator(const dbref *reference) : MergeOperator()
@@ -802,11 +800,11 @@ public:
   }
 
   virtual bool
-  FullMerge(const Slice& key,
-	    const Slice* existing_value,
+  FullMerge(const rocksdb::Slice& key,
+	    const rocksdb::Slice* existing_value,
 	    const std::deque<std::string>& operand_list,
 	    std::string* new_value,
-	    Logger* logger) const override
+	    rocksdb::Logger* logger) const override
   { (void)key;
     (void)logger;
     std::string s;
@@ -825,11 +823,11 @@ public:
   }
 
   virtual bool
-  PartialMerge(const Slice& key,
-	       const Slice& left_operand,
-	       const Slice& right_operand,
+  PartialMerge(const rocksdb::Slice& key,
+	       const rocksdb::Slice& left_operand,
+	       const rocksdb::Slice& right_operand,
 	       std::string* new_value,
-	       Logger* logger) const override
+	       rocksdb::Logger* logger) const override
   { (void)key;
     (void)logger;
     std::string s = left_operand.ToString();
@@ -928,8 +926,8 @@ struct ReadOptdef
 
 static ReadOptdef read_optdefs[] =
 { // "snapshot" const Snapshot*
-  // "iterate_lower_bound" const Slice*
-  // "iterate_upper_bound" const Slice*
+  // "iterate_lower_bound" const rocksdb::Slice*
+  // "iterate_upper_bound" const rocksdb::Slice*
   {         "readahead_size",                       RD_ODEF {
     options->readahead_size                       = arg.as_size_t(); }, PlAtom(PlAtom::null) },
   {         "max_skippable_internal_keys",          RD_ODEF {
@@ -958,8 +956,8 @@ static ReadOptdef read_optdefs[] =
   // TODO: "iter_start_seqnum" removed from rocksdb/include/options.h?
   // {         "iter_start_seqnum",                    RD_ODEF {
   //   options->iter_start_seqnum                    = static_cast<SequenceNumber>(arg); }, PlAtom(PlAtom::null) },
-  //         "timestamp" Slice*
-  // "iter_start_ts" Slice*
+  //         "timestamp" rocksdb::Slice*
+  // "iter_start_ts" rocksdb::Slice*
   {
 	     "deadline",                            RD_ODEF {
       options->deadline                             = static_cast<std::chrono::microseconds>(arg.as_int64_t()); }, PlAtom(PlAtom::null) },
@@ -1014,7 +1012,7 @@ static WriteOptdef write_optdefs[] =
     options->low_pri                        = arg.as_bool(); }, PlAtom(PlAtom::null) },
   {         "memtable_insert_hint_per_batch", WR_ODEF {
     options->memtable_insert_hint_per_batch = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  // "timestamp" Slice*
+  // "timestamp" rocksdb::Slice*
 
   { nullptr, nullptr, PlAtom(PlAtom::null) }
 };
@@ -1037,14 +1035,14 @@ lookup_write_optdef_and_apply(rocksdb::WriteOptions *options,
 
 static void
 options_set_InfoLogLevel(rocksdb::Options *options, PlTerm arg)
-{ InfoLogLevel log_level;
+{ rocksdb::InfoLogLevel log_level;
   const auto arg_a = arg.as_atom();
-       if ( arg_a == ATOM_debug  ) log_level = DEBUG_LEVEL;
-  else if ( arg_a == ATOM_info   ) log_level = INFO_LEVEL;
-  else if ( arg_a == ATOM_warn   ) log_level = WARN_LEVEL;
-  else if ( arg_a == ATOM_error  ) log_level = ERROR_LEVEL;
-  else if ( arg_a == ATOM_fatal  ) log_level = FATAL_LEVEL;
-  else if ( arg_a == ATOM_header ) log_level = HEADER_LEVEL;
+       if ( arg_a == ATOM_debug  ) log_level = rocksdb::DEBUG_LEVEL;
+  else if ( arg_a == ATOM_info   ) log_level = rocksdb::INFO_LEVEL;
+  else if ( arg_a == ATOM_warn   ) log_level = rocksdb::WARN_LEVEL;
+  else if ( arg_a == ATOM_error  ) log_level = rocksdb::ERROR_LEVEL;
+  else if ( arg_a == ATOM_fatal  ) log_level = rocksdb::FATAL_LEVEL;
+  else if ( arg_a == ATOM_header ) log_level = rocksdb::HEADER_LEVEL;
   else throw PlTypeError("InfoLogLevel", arg); // TODO: this causes SIGSEGV
   options->info_log_level = log_level;
 }
@@ -1079,7 +1077,7 @@ static Optdef optdefs[] =
   // "env" Env::Default
   // "rate_limiter" - shared_ptr<RateLimiter>
   // "sst_file_manager" - shared_ptr<SstFileManager>
-  // "info_log" - shared_ptr<Logger> - see comment in ../README.md
+  // "info_log" - shared_ptr<rocksdb::Logger> - see comment in ../README.md
   { "info_log_level",                                  options_set_InfoLogLevel, PlAtom(PlAtom::null) },
   {         "max_open_files",                          ODEF {
     options->max_open_files                          = arg.as_int(); }, PlAtom(PlAtom::null) },
@@ -1088,7 +1086,7 @@ static Optdef optdefs[] =
   {         "max_total_wal_size",                      ODEF {
     options->max_total_wal_size                      = arg.as_uint64_t(); }, PlAtom(PlAtom::null) },
   {         "statistics",                              ODEF {
-    options->statistics = arg.as_bool() ? CreateDBStatistics() : nullptr; }, PlAtom(PlAtom::null) },
+    options->statistics = arg.as_bool() ? rocksdb::CreateDBStatistics() : nullptr; }, PlAtom(PlAtom::null) },
   {         "use_fsync",                               ODEF {
     options->use_fsync                               = arg.as_bool(); }, PlAtom(PlAtom::null) },
   // "db_paths" - vector<DbPath>
@@ -1269,7 +1267,7 @@ PREDICATE(rocks_open_, 3)
     return false;
   PlTerm_tail tail(A3);
   PlTerm_var opt;
-  while(tail.next(opt))
+  while ( tail.next(opt) )
   { PlAtom name(PlAtom::null);
     size_t arity;
 
@@ -1332,9 +1330,9 @@ PREDICATE(rocks_open_, 3)
     else if ( builtin_merger != MERGE_NONE )
       options.merge_operator.reset(new ListMergeOperator(ref));
     if ( read_only )
-      status = DB::OpenForReadOnly(options, fn, &ref->db);
+      status = rocksdb::DB::OpenForReadOnly(options, fn, &ref->db);
     else
-      status = DB::Open(options, fn, &ref->db);
+      status = rocksdb::DB::Open(options, fn, &ref->db);
     ok(status);
     return unify_rocks(A2, ref);
   } catch(...)
@@ -1348,7 +1346,7 @@ PREDICATE(rocks_close, 1)
 { dbref *ref;
 
   get_rocks(A1, &ref);
-  DB* db = ref->db;
+  rocksdb::DB* db = ref->db;
 
   ref->db = nullptr;
   ref->flags |= DB_DESTROYED;
@@ -1362,12 +1360,12 @@ PREDICATE(rocks_close, 1)
 }
 
 
-static WriteOptions
+static rocksdb::WriteOptions
 write_options(PlTerm options_term)
-{ WriteOptions options;
+{ rocksdb::WriteOptions options;
   PlTerm_tail tail(options_term);
   PlTerm_var opt;
-  while(tail.next(opt))
+  while ( tail.next(opt) )
   { PlAtom name(PlAtom::null);
     size_t arity;
 
@@ -1395,7 +1393,7 @@ PREDICATE(rocks_put, 4)
     PlTerm_var tmp;
     std::string value;
 
-    while(list.next(tmp))
+    while ( list.next(tmp) )
     { auto s = get_slice(tmp, ref->type.value);
       value += s->ToString();
     }
@@ -1424,12 +1422,12 @@ PREDICATE(rocks_merge, 4)
   return true;
 }
 
-static ReadOptions
+static rocksdb::ReadOptions
 read_options(PlTerm options_term)
-{ ReadOptions options;
+{ rocksdb::ReadOptions options;
   PlTerm_tail tail(options_term);
   PlTerm_var opt;
-  while(tail.next(opt))
+  while ( tail.next(opt) )
   { PlAtom name(PlAtom::null);
     size_t arity;
     PlCheckFail(opt.name_arity(&name, &arity));
@@ -1468,7 +1466,7 @@ typedef enum
 } enum_type;
 
 typedef struct
-{ Iterator *it;
+{ rocksdb::Iterator *it;
   dbref    *ref;
   enum_type type;
   struct
@@ -1508,7 +1506,7 @@ free_enum_state(enum_state *state)
 static bool
 unify_enum_key(PlTerm t, const enum_state *state)
 { if ( state->type == ENUM_PREFIX )
-  { Slice k(state->it->key());
+  { rocksdb::Slice k(state->it->key());
 
     if ( k.size_ >= state->prefix.length &&
 	 memcmp(k.data_, state->prefix.string, state->prefix.length) == 0 )
@@ -1527,7 +1525,7 @@ unify_enum_key(PlTerm t, const enum_state *state)
 static bool
 enum_key_prefix(const enum_state *state)
 { if ( state->type == ENUM_PREFIX )
-  { Slice k(state->it->key());
+  { rocksdb::Slice k(state->it->key());
     return ( k.size_ >= state->prefix.length &&
 	     memcmp(k.data_, state->prefix.string, state->prefix.length) == 0 );
   } else
@@ -1536,11 +1534,11 @@ enum_key_prefix(const enum_state *state)
 
 
 static foreign_t
-rocks_enum(PlTermv PL_av, int ac, enum_type type, PlControl handle, ReadOptions options)
+rocks_enum(PlTermv PL_av, int ac, enum_type type, PlControl handle, rocksdb::ReadOptions options)
 { enum_state state_buf = {0};
   enum_state *state = &state_buf;
 
-  switch(handle.foreign_control())
+  switch ( handle.foreign_control() )
   { case PL_FIRST_CALL:
       get_rocks(A1, &state->ref);
       if ( ac >= 4 )
@@ -1612,7 +1610,7 @@ static PlAtom ATOM_delete("delete");
 static PlAtom ATOM_put("put");
 
 static void
-batch_operation(const dbref *ref, WriteBatch &batch, PlTerm e)
+batch_operation(const dbref *ref, rocksdb::WriteBatch &batch, PlTerm e)
 { PlAtom name(PlAtom::null);
   size_t arity;
 
@@ -1634,11 +1632,11 @@ PREDICATE(rocks_batch, 3)
 { dbref *ref;
 
   get_rocks(A1, &ref);
-  WriteBatch batch;
+  rocksdb::WriteBatch batch;
   PlTerm_tail tail(A2);
   PlTerm_var e;
 
-  while(tail.next(e))
+  while ( tail.next(e) )
   { batch_operation(ref, batch, e);
   }
 
