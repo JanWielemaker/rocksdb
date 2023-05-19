@@ -361,77 +361,85 @@ ok(const rocksdb::Status &status)
 class PlSlice : public Slice
 {
 public:
-  int must_free = 0;
-  union
-  { int32_t i32;
-    int64_t i64;
-    float   f32;
-    double  f64;
-  } v;
-  std::string str_; // backing store if needed for PlSlice::data_
+  explicit PlSlice()
+    : slice_() { }
+  explicit PlSlice(const char *d, size_t n)
+    : slice_(d, n) { }
+  explicit PlSlice(const std::string& s)
+    : slice_(s) { }
 
-  void clear()
-  { if ( must_free )
-      Plx_erase_external(const_cast<char *>(data_));
-    must_free = 0;
-    data_ = nullptr;
-    size_ = 0;
+  const char* data() const { return slice_.data(); }
+  size_t size() const { return slice_.size(); }
+  std::string ToString(bool hex = false) const { return slice_.ToString(hex); }
+  const rocksdb::Slice& slice() const { return slice_; }
+
+  virtual ~PlSlice() = default;
+
+protected:
+  rocksdb::Slice slice_;
+};
+
+template<typename T>
+class PlSliceNumber : public PlSlice
+{
+public:
+  explicit PlSliceNumber<T>(T v)
+    : PlSlice(reinterpret_cast<const char *>(&v_), sizeof v_),
+      v_(v) { }
+
+  virtual ~PlSliceNumber<T>() = default;
+
+protected:
+  T v_; // backing store for rocksdb::slice
+};
+
+class PlSliceStr : public PlSlice
+{
+public:
+  explicit PlSliceStr(const std::string& s)
+    : v_(s)
+  { // Assign slice after setting up v_ because Slice(v_) uses both
+    // the address of v_ and the size; if we used the initializer
+    // list, the fields are done in the order of their declaration.
+    slice_ = rocksdb::Slice(v_);
   }
 
-  ~PlSlice()
-  { if ( must_free )
-      Plx_erase_external(const_cast<char *>(data_));
-  }
+  virtual ~PlSliceStr() = default;
+
+protected:
+  std::string v_; // backing store for rocksdb::slice
 };
 
 
 #define CVT_IN	(CVT_ATOM|CVT_STRING|CVT_LIST)
 
-static void
-get_slice(PlTerm t, PlSlice *s, blob_type type)
+[[nodiscard]]
+static std::unique_ptr<PlSlice>
+get_slice(PlTerm t, blob_type type)
 { switch(type)
   { case BLOB_ATOM:
     case BLOB_STRING:
-      s->str_ = t.get_nchars(CVT_IN|CVT_EXCEPTION|REP_UTF8);
-      s->data_ = s->str_.data();
-      s->size_ = s->str_.size();
-      return;
+      return std::make_unique<PlSliceStr>(t.get_nchars(CVT_IN|CVT_EXCEPTION|REP_UTF8));
     case BLOB_BINARY:
-      s->str_ = t.get_nchars(CVT_IN|CVT_EXCEPTION);
-      s->data_ = s->str_.data();
-      s->size_ = s->str_.size();
-      return;
+      return std::make_unique<PlSliceStr>(t.get_nchars(CVT_IN|CVT_EXCEPTION));
     case BLOB_INT32:
-      t.integer(&s->v.i32);
-      s->data_ = reinterpret_cast<const char *>(&s->v.i32);
-      s->size_ = sizeof s->v.i32;
-      return;
+      { int32_t v;
+        t.integer(&v);
+        return std::make_unique<PlSliceNumber<int32_t>>(v);
+      }
     case BLOB_INT64:
-      t.integer(&s->v.i64);
-      s->data_ = reinterpret_cast<const char *>(&s->v.i64);
-      s->size_ = sizeof s->v.i64;
-      return;
+      { int64_t v;
+        t.integer(&v);
+        return std::make_unique<PlSliceNumber<int64_t>>(v);
+      }
     case BLOB_FLOAT32:
-      { double d = t.as_float();
-	s->v.f32 = static_cast<float>(d);
-	s->data_ = reinterpret_cast<const char *>(&s->v.f32);
-	s->size_ = sizeof s->v.f32 ;
-      }
-      return;
+      return std::make_unique<PlSliceNumber<float>>(static_cast<float>(t.as_float()));
     case BLOB_FLOAT64:
-      s->v.f64 = t.as_float();
-      s->data_ = reinterpret_cast<const char*>(&s->v.f64);
-      s->size_ = sizeof s->v.f64;
-      return;
+      return std::make_unique<PlSliceNumber<double>>(t.as_double());
     case BLOB_TERM:
-      { size_t len;
-	char *str = Plx_record_external(t.C_, &len);
-	s->data_ = str;
-	s->size_ = len;
-	s->must_free = TRUE;
-	return;
+      { PlRecordExternalCopy e(t); // declared here so that it stays in scope for return
+        return std::make_unique<PlSliceStr>(e.data());
       }
-      break;
     default:
       assert(0);
   }
@@ -629,10 +637,8 @@ call_merger(const dbref *ref, PlTermv av, std::string* new_value,
   try
   { PlQuery q(pred_call6, av);
     if ( q.next_solution() )
-    { PlSlice answer;
-
-      get_slice(av[5], &answer, ref->type.value);
-      new_value->assign(answer.data(), answer.size());
+    { auto answer = get_slice(av[5], ref->type.value);
+      new_value->assign(answer->data(), answer->size());
       return true;
     } else
     { Log(logger, "merger failed");
@@ -1377,32 +1383,27 @@ write_options(PlTerm options_term)
 
 PREDICATE(rocks_put, 4)
 { dbref *ref;
-  PlSlice key;
 
   get_rocks(A1, &ref);
-  get_slice(A2, &key, ref->type.key);
+  auto key = get_slice(A2, ref->type.key);
 
   if ( ref->builtin_merger == MERGE_NONE )
-  { PlSlice value;
-
-    get_slice(A3, &value, ref->type.value);
-    ok(ref->db->Put(write_options(A4), key, value));
+  { auto value = get_slice(A3, ref->type.value);
+    ok(ref->db->Put(write_options(A4), key->slice(), value->slice()));
   } else
   { PlTerm_tail list(A3);
     PlTerm_var tmp;
     std::string value;
-    PlSlice s;
 
     while(list.next(tmp))
-    { get_slice(tmp, &s, ref->type.value);
-      value += s.ToString();
-      s.clear();
+    { auto s = get_slice(tmp, ref->type.value);
+      value += s->ToString();
     }
 
     if ( ref->builtin_merger == MERGE_SET )
       sort(&value, ref->type.value);
 
-    ok(ref->db->Put(write_options(A4), key, value));
+    ok(ref->db->Put(write_options(A4), key->slice(), value));
   }
 
   return true;
@@ -1410,16 +1411,15 @@ PREDICATE(rocks_put, 4)
 
 PREDICATE(rocks_merge, 4)
 { dbref *ref;
-  PlSlice key, value;
 
   get_rocks(A1, &ref);
   if ( ref->merger.is_null() && ref->builtin_merger == MERGE_NONE )
     throw PlPermissionError("merge", "rocksdb", A1);
 
-  get_slice(A2, &key,   ref->type.key);
-  get_slice(A3, &value, ref->type.value);
+  auto key = get_slice(A2, ref->type.key);
+  auto value = get_slice(A3, ref->type.value);
 
-  ok(ref->db->Merge(write_options(A4), key, value));
+  ok(ref->db->Merge(write_options(A4), key->slice(), value->slice()));
 
   return true;
 }
@@ -1443,24 +1443,22 @@ read_options(PlTerm options_term)
 
 PREDICATE(rocks_get, 4)
 { dbref *ref;
-  PlSlice key;
   std::string value;
 
   get_rocks(A1, &ref);
-  get_slice(A2, &key, ref->type.key);
+  auto key = get_slice(A2, ref->type.key);
 
-  return ( ok(ref->db->Get(read_options(A4), key, &value)) &&
+  return ( ok(ref->db->Get(read_options(A4), key->slice(), &value)) &&
 	   unify_value(A3, value, ref->builtin_merger, ref->type.value) );
 }
 
 PREDICATE(rocks_delete, 3)
 { dbref *ref;
-  PlSlice key;
 
   get_rocks(A1, &ref);
-  get_slice(A2, &key, ref->type.key);
+  auto key = get_slice(A2, ref->type.key);
 
-  return ok(ref->db->Delete(write_options(A3), key));
+  return ok(ref->db->Delete(write_options(A3), key->slice()));
 }
 
 typedef enum
@@ -1620,16 +1618,12 @@ batch_operation(const dbref *ref, WriteBatch &batch, PlTerm e)
 
   PlCheckFail(e.name_arity(&name, &arity));
   if ( ATOM_delete == name && arity == 1 )
-  { PlSlice key;
-
-    get_slice(e[1], &key, ref->type.key);
-    batch.Delete(key);
+  { auto key = get_slice(e[1], ref->type.key);
+    batch.Delete(key->slice());
   } else if ( ATOM_put == name && arity == 2 )
-  { PlSlice key, value;
-
-    get_slice(e[1], &key,   ref->type.key);
-    get_slice(e[2], &value, ref->type.value);
-    batch.Put(key, value);
+  { auto key = get_slice(e[1], ref->type.key);
+    auto value = get_slice(e[2], ref->type.value);
+    batch.Put(key->slice(), value->slice());
   } else
   { throw PlDomainError("rocks_batch_operation", e);
   }

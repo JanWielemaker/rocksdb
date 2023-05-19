@@ -61,23 +61,46 @@ test_rocksdb :-
 :- begin_tests(rocks, [cleanup(delete_db)]).
 
 test(basic, [Noot == noot,
-	     cleanup(delete_db)]) :-
-	test_db(Dir),
-	rocks_open(Dir, RocksDB, []),
+	     setup(setup_db(Dir, RocksDB)),
+	     cleanup(cleaup_db(Dir, RocksDB))]) :-
 	rocks_put(RocksDB, aap, noot),
 	rocks_get(RocksDB, aap, Noot),
 	rocks_delete(RocksDB, aap),
-	assertion(\+ rocks_get(RocksDB, aap, _)),
-	rocks_close(RocksDB).
+	assertion(\+ rocks_get(RocksDB, aap, _)).
+
+test(basic, [Vs_get_expect == Vs_get_actual,
+	     setup(setup_db(Dir, RocksDB, [key(atom), value(term)])),
+	     cleanup(cleaup_db(Dir, RocksDB))]) :-
+	% TODO: binary
+	KVs = [atom    - one,
+	       string  - "two",
+	       int32   - 2_147_483_647,
+	       int64   - -9_223_372_036_854_775_808,
+	       float32 - 1.5,
+	       float64 - 3.14159,
+	       term    - functor(1,2.0,three,"four")],
+	random_permutation(KVs, KVs_put),
+	random_permutation(KVs, KVs_get),
+	random_permutation(KVs, KVs_delete),
+	pairs_keys_values(KVs_put, Ks_put, Vs_put),
+	pairs_keys_values(KVs_get, Ks_get, Vs_get_expect),
+	pairs_keys(KVs_delete, Ks_delete),
+	maplist(rocks_put(RocksDB), Ks_put, Vs_put),
+	maplist(rocks_get(RocksDB), Ks_get, Vs_get_actual),
+	maplist(rocks_delete(RocksDB), Ks_delete),
+	maplist(assertion_key_not_found(RocksDB), Ks_delete).
+
+assertion_key_not_found(RocksDB, Key) :-
+	assertion(\+ rocks_get(RocksDB, Key, _)).
+
 test(basic, [Noot == noot,
-	     cleanup(delete_db)]) :-
-	test_db(Dir),
-	rocks_open(Dir, RocksDB, []),
+	     setup(setup_db(Dir, RocksDB)),
+	     cleanup(cleaup_db(Dir, RocksDB))]) :-
 	rocks_put(RocksDB, aap, noot, [sync(true)]),
 	rocks_close(RocksDB),
 	rocks_open(Dir, RocksDB2, [mode(read_only)]),
-	rocks_get(RocksDB2, aap, Noot, [fill_cache(false)]),
-	rocks_close(RocksDB2).
+	rocks_get(RocksDB2, aap, Noot, [fill_cache(false)]).
+
 test(options1, [error(type_error(bool,xxx),_),
 		cleanup(delete_db)]) :-
 	test_db(Dir),
@@ -333,10 +356,25 @@ test(enum,
 test_db('/tmp/test_rocksdb').
 
 delete_db :-
-	test_db(DB),
-	delete_db(DB).
+    test_db(DB),
+    delete_db(DB).
 
 delete_db(DB) :-
-	exists_directory(DB), !,
-	delete_directory_and_contents(DB).
-delete_db(_).
+    (   exists_directory(DB)
+    ->  delete_directory_and_contents(DB)
+    ;   true
+    ).
+
+setup_db(Dir, RocksDB) :-
+    setup_db(Dir, RocksDB, []).
+
+setup_db(Dir, RocksDB, Options) :-
+    test_db(Dir),
+    rocks_open(Dir, RocksDB, Options).
+
+% cleanup_db/2 does its best to close the database because, if there
+% is an error in the test case and the database isn't closed, it will
+% cause spurious errors from all the subsequent tests.
+cleaup_db(Dir, RocksDB) :-
+    catch(ignore(rocks_close(RocksDB)), _, true),
+    delete_db(Dir).
