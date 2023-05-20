@@ -45,8 +45,7 @@
 #include <SWI-Prolog.h>
 #include <SWI-cpp2.h>
 
-#include <SWI-cpp2.cpp> // TODO: this  should possibly be separate
-
+#include <SWI-cpp2.cpp> // TODO: this should possibly be separate
 
 		 /*******************************
 		 *	       SYMBOL		*
@@ -72,8 +71,20 @@ typedef enum
   MERGE_SET
 } merger_t;
 
-typedef struct dbref
-{ rocksdb::DB	*db;			/* DB handle */
+struct dbref
+{
+  dbref()
+    : db(             nullptr),
+      symbol(         PlAtom(PlAtom::null)),
+      name(           PlAtom(PlAtom::null)),
+      flags(          0),
+      builtin_merger( MERGE_NONE),
+      merger(         PlRecord(PlRecord::null)),
+      type(           { .key   = BLOB_ATOM,
+                        .value = BLOB_ATOM})
+  { }
+
+  rocksdb::DB	*db;			/* DB handle */
   PlAtom         symbol;		/* associated symbol */
   PlAtom	 name;			/* alias name */
   int	         flags;			/* flags */
@@ -83,31 +94,21 @@ typedef struct dbref
   { blob_type key;
     blob_type value;
   } type;
-} dbref;
-
-static dbref null_dbref =
-{ nullptr,	// rocksdb::DB	*db;
-  PlAtom(PlAtom::null),	// PlAtom        symbol;
-  PlAtom(PlAtom::null),	// PlAtom	 name;
-  0,		// int	         flags;
-  MERGE_NONE,	// merger_t	 builtin_merger;
-  PlRecord(PlRecord::null), // PlRexordRaw merger;
-  { BLOB_ATOM,	//   blob_type	   key;
-    BLOB_ATOM	//   blob_type	   value;
-  }
 };
-
 
 
 		 /*******************************
 		 *	      ALIAS		*
 		 *******************************/
 
-typedef struct alias_cell
-{ PlAtom	name;
-  PlAtom	symbol;
-  struct alias_cell *next;
-} alias_cell;
+struct alias_cell
+{
+  alias_cell(PlAtom _name, PlAtom _symbol, alias_cell *_next)
+    : name(_name), symbol(_symbol), next(_next) { }
+  PlAtom      name;
+  PlAtom      symbol;
+  alias_cell *next;
+};
 
 #define ALIAS_HASH_SIZE 64
 
@@ -115,16 +116,18 @@ std::mutex alias_lock;
 static unsigned int alias_size = ALIAS_HASH_SIZE;
 static alias_cell *alias_entries[ALIAS_HASH_SIZE];
 
+[[nodiscard]]
 static unsigned int
 atom_hash(PlAtom a)
 { return static_cast<unsigned int>(a.C_>>7) % alias_size;
 }
 
+[[nodiscard]]
 static PlAtom
 rocks_get_alias(PlAtom name)
-{ for(alias_cell *c = alias_entries[atom_hash(name)];
+{ for ( alias_cell *c = alias_entries[atom_hash(name)];
       c;
-      c = c->next)
+      c = c->next )
   { if ( c->name == name )
       return c->symbol;
   }
@@ -138,11 +141,7 @@ rocks_alias(PlAtom name, PlAtom symbol)
 
   alias_lock.lock();
   if ( rocks_get_alias(name).is_null() )
-  { alias_cell *c = static_cast<alias_cell *>(malloc(sizeof *c));
-
-    c->name   = name;
-    c->symbol = symbol;
-    c->next   = alias_entries[key];
+  { auto c = new alias_cell(name, symbol, alias_entries[key]);
     alias_entries[key] = c;
     c->name.register_ref();
     c->symbol.register_ref();
@@ -159,7 +158,7 @@ rocks_unalias(PlAtom name)
   alias_cell *c, *prev=nullptr;
 
   alias_lock.lock();
-  for(c = alias_entries[key]; c; prev=c, c = c->next)
+  for ( c = alias_entries[key]; c; prev=c, c = c->next )
   { if ( c->name == name )
     { if ( prev )
 	prev->next = c->next;
@@ -167,7 +166,7 @@ rocks_unalias(PlAtom name)
 	alias_entries[key] = c->next;
       c->name.unregister_ref();
       c->symbol.unregister_ref();
-      free(c);
+      delete c;
 
       break;
     }
@@ -180,6 +179,7 @@ rocks_unalias(PlAtom name)
 		 *	 SYMBOL REFERENCES	*
 		 *******************************/
 
+[[nodiscard]]
 static bool
 write_rocks_ref_(IOSTREAM *s, PlAtom eref, int flags)
 { auto refp = static_cast<dbref **>(eref.blob_data(nullptr, nullptr));
@@ -191,6 +191,7 @@ write_rocks_ref_(IOSTREAM *s, PlAtom eref, int flags)
   return true;
 }
 
+[[nodiscard]]
 static int // TODO: bool
 write_rocks_ref(IOSTREAM *s, atom_t eref, int flags)
 { return write_rocks_ref_(s, PlAtom(eref), flags);
@@ -198,9 +199,10 @@ write_rocks_ref(IOSTREAM *s, atom_t eref, int flags)
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-GC an rocks from the atom garbage collector.
+GC a rocks dbref blob from the atom garbage collector.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
+[[nodiscard]]
 static bool
 release_rocks_ref_(PlAtom aref)
 { auto refp = static_cast<dbref **>(aref.blob_data(nullptr, nullptr));
@@ -215,16 +217,18 @@ release_rocks_ref_(PlAtom aref)
     }
   }
   ref->merger.erase();
-  Plx_free(ref);
+  delete ref;
 
   return true;
 }
 
+[[nodiscard]]
 static int // TODO: bool
 release_rocks_ref(atom_t aref)
 { return release_rocks_ref_(PlAtom(aref));
 }
 
+[[nodiscard]]
 static bool
 save_rocks_(PlAtom aref, IOSTREAM *fd)
 { auto refp = static_cast<dbref **>(aref.blob_data(nullptr, nullptr));
@@ -234,11 +238,13 @@ save_rocks_(PlAtom aref, IOSTREAM *fd)
   return PL_warning("Cannot save reference to <rocksdb>(%p)", ref);
 }
 
+[[nodiscard]]
 static int // TODO: bool
 save_rocks(atom_t aref, IOSTREAM *fd)
 { return save_rocks_(PlAtom(aref), fd);
 }
 
+[[nodiscard]]
 static PlAtom
 load_rocks_(IOSTREAM *fd)
 { (void)fd;
@@ -252,18 +258,19 @@ load_rocks(IOSTREAM *fd)
 }
 
 static PL_blob_t rocks_blob =
-{ PL_BLOB_MAGIC,
-  PL_BLOB_UNIQUE,
-  (const char *)"rocksdb",
-  release_rocks_ref,
-  nullptr,
-  write_rocks_ref,
-  nullptr,
-  save_rocks, // TODO: implement
-  load_rocks  // TODO: implement
+{ .magic   = PL_BLOB_MAGIC,
+  .flags   = PL_BLOB_UNIQUE,
+  .name    = "rocksdb",
+  .release = release_rocks_ref,
+  .compare = nullptr,
+  .write   = write_rocks_ref,
+  .acquire = nullptr,
+  .save    = save_rocks, // TODO: implement
+  .load    = load_rocks  // TODO: implement
 };
 
 
+[[nodiscard]]
 static bool
 unify_rocks(PlTerm t, dbref *ref)
 { if ( ref->name.not_null() )
@@ -281,7 +288,8 @@ unify_rocks(PlTerm t, dbref *ref)
 }
 
 
-static dbref*
+[[nodiscard]]
+static dbref *
 symbol_dbref(PlAtom symbol)
 { void *data;
   size_t len;
@@ -298,15 +306,15 @@ symbol_dbref(PlAtom symbol)
 
 [[nodiscard]]
 static dbref *
-get_rocks(PlTerm t,bool warn=true)
+get_rocks(PlTerm t, bool warn=true)
 { PlAtom a(PlAtom::null);
 
   if ( warn )
     a = t.as_atom();
   else
     t.get_atom_ex(&a);
-  if ( a.not_null() )
-  { for(int i=0; i<2 && a.not_null(); i++)
+  if ( t.not_null() )
+  { for ( int i=0; i<2 && a.not_null(); i++ )
     { dbref *ref;
 
       if ( (ref=symbol_dbref(a)) )
@@ -331,17 +339,10 @@ get_rocks(PlTerm t,bool warn=true)
 		 *	      UTIL		*
 		 *******************************/
 
-class RocksError : public PlException
-{
-public:
-  RocksError(const rocksdb::Status &status) :
-    PlException(PlCompound("error",
-			   PlTermv(PlCompound("rocks_error",
-					      PlTermv(PlTerm_atom(status.ToString()))),
-				   PlTerm_var())))
-  {
-  }
-};
+PlException RocksError(const rocksdb::Status &status)
+{ return PlGeneralError(PlCompound("rocks_error",
+				   PlTermv(PlTerm_atom(status.ToString()))));
+}
 
 
 static bool
@@ -353,7 +354,12 @@ ok(const rocksdb::Status &status)
   throw RocksError(status);
 }
 
-class PlSlice : public rocksdb::Slice
+static void
+ok_or_throw_fail(const rocksdb::Status &status)
+{ PlCheckFail(ok(status));
+}
+
+class PlSlice
 {
 public:
   explicit PlSlice()
@@ -411,7 +417,7 @@ protected:
 [[nodiscard]]
 static std::unique_ptr<PlSlice>
 get_slice(PlTerm t, blob_type type)
-{ switch(type)
+{ switch ( type )
   { case BLOB_ATOM:
     case BLOB_STRING:
       return std::make_unique<PlSliceStr>(t.get_nchars(CVT_IN|CVT_EXCEPTION|REP_UTF8));
@@ -441,46 +447,38 @@ get_slice(PlTerm t, blob_type type)
 }
 
 
-static const PlAtom ATOM_("");
-
-
+[[nodiscard]]
 static bool
 unify(PlTerm t, const rocksdb::Slice &s, blob_type type)
-{ switch(type)
+{ switch ( type )
   { case BLOB_ATOM:
       return t.unify_chars(PL_ATOM|REP_UTF8, s.size_, s.data_);
     case BLOB_STRING:
-
       return t.unify_chars(PL_STRING|REP_UTF8, s.size_, s.data_);
     case BLOB_BINARY:
       return t.unify_chars(PL_STRING|REP_ISO_LATIN_1, s.size_, s.data_);
     case BLOB_INT32:
     { int i;
-
       memcpy(&i, s.data_, sizeof i); // Unaligned i=*reinterpret_cast<int>(s.data_)
       return t.unify_integer(i);
     }
     case BLOB_INT64:
     { int64_t i;
-
       memcpy(&i, s.data_, sizeof i);
       return t.unify_integer(i);
     }
     case BLOB_FLOAT32:
     { float f;
-
       memcpy(&f, s.data_, sizeof f);
       return t.unify_float(f);
     }
     case BLOB_FLOAT64:
     { double f;
-
       memcpy(&f, s.data_, sizeof f);
       return t.unify_float(f);
     }
     case BLOB_TERM:
     { PlTerm_var tmp;
-
       Plx_recorded_external(s.data_, tmp.C_);
       return tmp.unify_term(t);
     }
@@ -490,95 +488,99 @@ unify(PlTerm t, const rocksdb::Slice &s, blob_type type)
   }
 }
 
+[[nodiscard]]
 static bool
 unify(PlTerm t, const rocksdb::Slice *s, blob_type type)
-{ if ( s == static_cast<const rocksdb::Slice *>(nullptr) )
-  { switch(type)
-    { case BLOB_ATOM:
-	return t.unify_atom(ATOM_);
-      case BLOB_STRING:
-      case BLOB_BINARY:
-	return t.unify_chars(PL_STRING, 0, "");
-      case BLOB_INT32:
-      case BLOB_INT64:
-	return t.unify_integer(0);
-      case BLOB_FLOAT32:
-      case BLOB_FLOAT64:
-	return t.unify_float(0.0);
-      case BLOB_TERM:
-	return t.unify_nil();
-      default:
-	assert(0);
-	return false;
-    }
-  }
+{ if ( s )
+    return unify(t, *s, type);
 
-  return unify(t, *s, type);
+  switch ( type )
+  { case BLOB_ATOM:
+    { static const PlAtom ATOM_("");
+      return t.unify_atom(ATOM_);
+    }
+    case BLOB_STRING:
+    case BLOB_BINARY:
+      return t.unify_chars(PL_STRING, 0, "");
+    case BLOB_INT32:
+    case BLOB_INT64:
+      return t.unify_integer(0);
+    case BLOB_FLOAT32:
+    case BLOB_FLOAT64:
+      return t.unify_float(0.0);
+    case BLOB_TERM:
+      return t.unify_nil();
+    default:
+      assert(0);
+      return false;
+  }
 }
 
+[[nodiscard]]
 static bool
 unify(PlTerm t, const std::string &s, blob_type type)
-{ rocksdb::Slice sl(s.data(), s.length());
+{ rocksdb::Slice sl(s);
 
   return unify(t, sl, type);
 }
 
+[[nodiscard]]
 static bool
 unify_value(PlTerm t, const rocksdb::Slice &s, merger_t merge, blob_type type)
 { if ( merge == MERGE_NONE )
-  { return unify(t, s, type);
-  } else
-  { PlTerm_tail list(t);
-    PlTerm_var tmp;
-    const char *data = s.data();
-    const char *end  = data+s.size();
+   return unify(t, s, type);
 
-    while ( data < end )
-    { switch ( type )
-      { case BLOB_INT32:
-	{ int i;
-	  memcpy(&i, data, sizeof i);
-	  data += sizeof i;
-	  Plx_put_integer(tmp.C_, i);
-	}
-	break;
-	case BLOB_INT64:
-	{ int64_t i;
-	  memcpy(&i, data, sizeof i);
-	  data += sizeof i;
-	  Plx_put_int64(tmp.C_, i);
-	}
-	break;
-	case BLOB_FLOAT32:
-	{ float i;
-	  memcpy(&i, data, sizeof i);
-	  data += sizeof i;
-	  Plx_put_float(tmp.C_, i);
-	}
-	break;
-	case BLOB_FLOAT64:
-	{ double i;
-	  memcpy(&i, data, sizeof i);
-	  data += sizeof i;
-	  Plx_put_float(tmp.C_, i);
-	}
-	break;
-	default:
-	  assert(0);
-	  return false;
+  PlTerm_tail list(t);
+  PlTerm_var tmp;
+  const char *data = s.data();
+  const char *end  = data+s.size();
+
+  while ( data < end )
+  { switch ( type )
+    { case BLOB_INT32:
+      { int i;
+	memcpy(&i, data, sizeof i);
+	data += sizeof i;
+	Plx_put_integer(tmp.C_, i);
       }
-
-      if ( !list.append(tmp) )
+      break;
+      case BLOB_INT64:
+      { int64_t i;
+	memcpy(&i, data, sizeof i);
+	data += sizeof i;
+	Plx_put_int64(tmp.C_, i);
+      }
+      break;
+      case BLOB_FLOAT32:
+      { float i;
+	memcpy(&i, data, sizeof i);
+	data += sizeof i;
+	Plx_put_float(tmp.C_, i);
+      }
+      break;
+      case BLOB_FLOAT64:
+      { double i;
+	memcpy(&i, data, sizeof i);
+	data += sizeof i;
+	Plx_put_float(tmp.C_, i);
+      }
+      break;
+      default:
+	assert(0);
 	return false;
     }
 
-    return list.close();
+    if ( !list.append(tmp) )
+      return false;
   }
+
+  return list.close();
 }
 
+[[nodiscard]]
 static bool
 unify_value(PlTerm t, const std::string &s, merger_t merge, blob_type type)
-{ rocksdb::Slice sl(s.data(), s.length());
+{ rocksdb::Slice sl(s);
 
   return unify_value(t, sl, merge, type);
 }
@@ -588,19 +590,19 @@ unify_value(PlTerm t, const std::string &s, merger_t merge, blob_type type)
 		 *	       MERGER		*
 		 *******************************/
 
-static const PlAtom ATOM_partial("partial");
-static const PlAtom ATOM_full("full");
-
+[[nodiscard]]
 static bool
 log_exception(rocksdb::Logger* logger)
 { PlTerm_term_t ex(Plx_exception(0));
 
   Log(logger, "%s", ex.as_string(PlEncoding::UTF8).c_str());
-  return false;
+  return false; // For convenience, allowing: return log_exception(logger);
 }
 
 class engine
-{ int tid = 0;
+{
+private:
+  int tid = 0;
 
 public:
   engine()
@@ -616,18 +618,16 @@ public:
   }
 
   ~engine()
-  { if ( tid )
+  { if ( tid > 0 )
       Plx_thread_destroy_engine();
   }
 };
 
+[[nodiscard]]
 static bool
 call_merger(const dbref *ref, PlTermv av, std::string* new_value,
 	    rocksdb::Logger* logger)
-{ static PlPredicate pred_call6(PlPredicate::null);
-
-  if ( pred_call6.is_null() )
-    pred_call6 = PlPredicate(PlFunctor("call", 6), PlModule("system"));
+{ static PlPredicate pred_call6(PlFunctor("call", 6), PlModule("system"));
 
   try
   { PlQuery q(pred_call6, av);
@@ -640,18 +640,20 @@ call_merger(const dbref *ref, PlTermv av, std::string* new_value,
       return false;
     }
   } catch(PlException &ex)
-    { Log(logger, "%s", ex.as_string(PlEncoding::UTF8).c_str());
+  { Log(logger, "%s", ex.as_string(PlEncoding::UTF8).c_str());
     return false;
   }
 }
 
 
 class PrologMergeOperator : public rocksdb::MergeOperator
-{ const dbref *ref;
+{
+private:
+  const dbref *ref;
+
 public:
-  PrologMergeOperator(const dbref *reference) : MergeOperator()
-  { ref = reference;
-  }
+  explicit PrologMergeOperator(const dbref *reference)
+    : ref(reference) { }
 
   virtual bool
   FullMerge(const rocksdb::Slice& key,
@@ -663,13 +665,16 @@ public:
     PlTermv av(6);
     PlTerm_tail list(av[4]);
     PlTerm_var tmp;
+    static const PlAtom ATOM_full("full");
 
     for (const auto& value : operand_list)
     { Plx_put_variable(tmp.C_);
-      unify(tmp, value, ref->type.value);
-      PlCheckFail(list.append(tmp));
+      if ( !unify(tmp, value, ref->type.value) ||
+           !list.append(tmp) )
+        return false;
     }
-    PlCheckFail(list.close());
+    if ( !list.close() )
+      return false;
 
     if ( av[0].unify_term(ref->merger.term()) &&
 	 av[1].unify_atom(ATOM_full) &&
@@ -688,6 +693,7 @@ public:
 	       rocksdb::Logger* logger) const override
   { engine e;
     PlTermv av(6);
+    static const PlAtom ATOM_partial("partial");
 
     if ( av[0].unify_term(ref->merger.term()) &&
 	 av[1].unify_atom(ATOM_partial) &&
@@ -705,96 +711,68 @@ public:
   }
 };
 
+template<typename Number_t>
+[[nodiscard]]
 static int
-cmp_int32(const void *v1, const void *v2)
-{ auto i1 = static_cast<const int *>(v1);
-  auto i2 = static_cast<const int *>(v2);
+cmp_number(const void *v1, const void *v2)
+{ auto i1 = static_cast<const Number_t *>(v1);
+  auto i2 = static_cast<const Number_t *>(v2);
 
   return *i1 > *i2 ? 1 : *i1 < *i2 ? -1 : 0;
+}
+
+template<typename Number_t>
+static void
+sort_numbers(std::string *str)
+{ auto s = const_cast<char *>(str->data());
+  auto len = str->length();
+  if ( len == 0 )
+    return;
+  auto ip = reinterpret_cast<Number_t *>(s);
+  auto op = ip+1;
+  auto ep = reinterpret_cast<Number_t *>(s+len);
+  Number_t cv;
+
+  qsort(s, len / sizeof ip, sizeof ip, cmp_number<Number_t>);
+  cv = *ip;
+  for ( ip++; ip < ep; ip++ )
+  { if ( *ip != cv )
+      *op++ = cv = *ip;
+  }
+  str->resize(static_cast<size_t>(reinterpret_cast<char *>(op) - s));
 }
 
 
 void
 sort(std::string *str, blob_type type)
-{ auto s = const_cast<char *>(str->c_str());
-  auto len = str->length();
-
-  if ( len > 0 )
-  { switch ( type )
-    { case BLOB_INT32:
-      { auto ip = reinterpret_cast<int *>(s);
-	auto op = ip+1;
-	auto ep = reinterpret_cast<int *>(s+len);
-	int cv;
-
-	qsort(s, len/sizeof(int), sizeof(int), cmp_int32);
-	cv = *ip;
-	for(ip++; ip < ep; ip++)
-	{ if ( *ip != cv )
-	    *op++ = cv = *ip;
-	}
-	str->resize(static_cast<size_t>((reinterpret_cast<char *>(op) - s)));
-	break;
-      }
-      case BLOB_INT64:
-      { auto ip = reinterpret_cast<int64_t *>(s);
-	auto op = ip+1;
-	auto ep = reinterpret_cast<int64_t *>(s+len);
-	int64_t cv;
-
-	qsort(s, len/sizeof(int64_t), sizeof(int64_t), cmp_int32);
-	cv = *ip;
-	for(ip++; ip < ep; ip++)
-	{ if ( *ip != cv )
-	    *op++ = cv = *ip;
-	}
-	str->resize(static_cast<size_t>(reinterpret_cast<char *>(op) - s));
-	break;
-      }
-      case BLOB_FLOAT32:
-      { auto ip = reinterpret_cast<float *>(s);
-	auto op = ip+1;
-	auto ep = reinterpret_cast<float *>(s+len);
-	float cv;
-
-	qsort(s, len/sizeof(float), sizeof(float), cmp_int32);
-	cv = *ip;
-	for(ip++; ip < ep; ip++)
-	{ if ( *ip != cv )
-	    *op++ = cv = *ip;
-	}
-	str->resize(static_cast<size_t>(reinterpret_cast<char *>(op) - s));
-	break;
-      }
-      case BLOB_FLOAT64:
-      { auto ip = reinterpret_cast<double *>(s);
-	auto op = ip+1;
-	auto ep = reinterpret_cast<double *>(s+len);
-	double cv;
-
-	qsort(s, len/sizeof(double), sizeof(double), cmp_int32);
-	cv = *ip;
-	for(ip++; ip < ep; ip++)
-	{ if ( *ip != cv )
-	    *op++ = cv = *ip;
-	}
-	str->resize(static_cast<size_t>(reinterpret_cast<char *>(op) - s));
-	break;
-      }
-      default:
-	assert(0);
-	return;
-    }
+{ switch ( type )
+  { case BLOB_INT32:
+      sort_numbers<int32_t>(str);
+      break;
+    case BLOB_INT64:
+      sort_numbers<int64_t>(str);
+      break;
+    case BLOB_FLOAT32:
+      sort_numbers<float>(str);
+      break;
+    case BLOB_FLOAT64:
+      sort_numbers<double>(str);
+      break;
+    default:
+      assert(0);
+      break;
   }
 }
 
 
 class ListMergeOperator : public rocksdb::MergeOperator
-{ const dbref *ref;
+{
+private:
+  const dbref *ref;
+
 public:
-  ListMergeOperator(const dbref *reference) : MergeOperator()
-  { ref = reference;
-  }
+  explicit ListMergeOperator(const dbref *reference)
+    : ref(reference) { }
 
   virtual bool
   FullMerge(const rocksdb::Slice& key,
@@ -804,10 +782,7 @@ public:
 	    rocksdb::Logger* logger) const override
   { (void)key;
     (void)logger;
-    std::string s;
-
-    if ( existing_value )
-      s += existing_value->ToString();
+    std::string s(existing_value ? existing_value->ToString() : "");
 
     for (const auto& value : operand_list)
     { s += value;
@@ -827,7 +802,7 @@ public:
 	       rocksdb::Logger* logger) const override
   { (void)key;
     (void)logger;
-    std::string s = left_operand.ToString();
+    std::string s(left_operand.ToString());
     s += right_operand.ToString();
 
     if ( ref->builtin_merger == MERGE_SET )
@@ -847,67 +822,42 @@ public:
 		 *	    PREDICATES		*
 		 *******************************/
 
-static const PlAtom ATOM_key("key");
-static const PlAtom ATOM_value("value");
-static const PlAtom ATOM_alias("alias");
-static const PlAtom ATOM_merge("merge");
-
-static const PlAtom ATOM_atom("atom");
-static const PlAtom ATOM_string("string");
-static const PlAtom ATOM_binary("binary");
-static const PlAtom ATOM_int32("int32");
-static const PlAtom ATOM_int64("int64");
-static const PlAtom ATOM_float("float");
-static const PlAtom ATOM_double("double");
-static const PlAtom ATOM_term("term");
-static const PlAtom ATOM_open("open");
-static const PlAtom ATOM_once("once");
-static const PlAtom ATOM_mode("mode");
-static const PlAtom ATOM_read_only("read_only");
-static const PlAtom ATOM_read_write("read_write");
-
-static const PlAtom ATOM_debug("debug");
-static const PlAtom ATOM_info("info");
-static const PlAtom ATOM_warn("warn");
-static const PlAtom ATOM_error("error");
-static const PlAtom ATOM_fatal("fatal");
-static const PlAtom ATOM_header("header");
-
-static const PlFunctor FUNCTOR_list1("list", 1);
-static const PlFunctor FUNCTOR_set1("set", 1);
-
 static void
 get_blob_type(PlTerm t, blob_type *key_type, merger_t *m)
 { PlAtom a(PlAtom::null);
-  bool rc;
+
+  static const PlFunctor FUNCTOR_list1("list", 1);
+  static const PlFunctor FUNCTOR_set1("set", 1);
+  static const PlAtom ATOM_atom("atom");
+  static const PlAtom ATOM_string("string");
+  static const PlAtom ATOM_binary("binary");
+  static const PlAtom ATOM_term("term");
+  static const PlAtom ATOM_int32("int32");
+  static const PlAtom ATOM_int64("int64");
+  static const PlAtom ATOM_float("float");
+  static const PlAtom ATOM_double("double");
 
   if ( m && t.is_functor(FUNCTOR_list1) )
   { *m = MERGE_LIST;
-    rc = t[1].get_atom(&a);
+    t[1].get_atom_ex(&a);
   } else if ( m && t.is_functor(FUNCTOR_set1) )
   { *m = MERGE_SET;
-    rc = t[1].get_atom(&a);
+    t[1].get_atom_ex(&a);
   } else
-    rc = t.get_atom(&a);
+    t.get_atom_ex(&a);
 
-  if ( rc )
-  { if ( !m || *m == MERGE_NONE )
-    {      if ( ATOM_atom   == a ) { *key_type = BLOB_ATOM;   return; }
-      else if ( ATOM_string == a ) { *key_type = BLOB_STRING; return; }
-      else if ( ATOM_binary == a ) { *key_type = BLOB_BINARY; return; }
-      else if ( ATOM_term   == a ) { *key_type = BLOB_TERM;   return; }
-    }
-
-	 if ( ATOM_int32  == a ) { *key_type = BLOB_INT32;   return; }
-    else if ( ATOM_int64  == a ) { *key_type = BLOB_INT64;   return; }
-    else if ( ATOM_float  == a ) { *key_type = BLOB_FLOAT32; return; }
-    else if ( ATOM_double == a ) { *key_type = BLOB_FLOAT64; return; }
-    else throw PlDomainError("rocks_type", t);
-
-    return;
+  if ( !m || *m == MERGE_NONE )
+  {      if ( ATOM_atom   == a ) { *key_type = BLOB_ATOM;   return; }
+    else if ( ATOM_string == a ) { *key_type = BLOB_STRING; return; }
+    else if ( ATOM_binary == a ) { *key_type = BLOB_BINARY; return; }
+    else if ( ATOM_term   == a ) { *key_type = BLOB_TERM;   return; }
   }
 
-  throw PlTypeError("atom", t);
+       if ( ATOM_int32  == a ) { *key_type = BLOB_INT32;   return; }
+  else if ( ATOM_int64  == a ) { *key_type = BLOB_INT64;   return; }
+  else if ( ATOM_float  == a ) { *key_type = BLOB_FLOAT32; return; }
+  else if ( ATOM_double == a ) { *key_type = BLOB_FLOAT64; return; }
+  else throw PlDomainError("rocks_type", t);
 }
 
 
@@ -921,6 +871,9 @@ struct ReadOptdef
 
 #define RD_ODEF [](rocksdb::ReadOptions *options, PlTerm arg)
 
+// TODO: move read_optdefs into read_options(), remove the PlAtom(PlAtom::null),
+//       replacing ReadOptdef::name with PlAtom ... C++ will initialize the
+//       "static" const structure on first use.
 static ReadOptdef read_optdefs[] =
 { // "snapshot" const Snapshot*
   // "iterate_lower_bound" const rocksdb::Slice*
@@ -974,8 +927,8 @@ static void
 lookup_read_optdef_and_apply(rocksdb::ReadOptions *options,
 			     ReadOptdef opt_defs[],
 			     PlAtom name, PlTerm opt)
-{ for(auto def=opt_defs; def->name; def++)
-  { if ( def->atom.is_null() ) // lazilly fill in atoms in lookup table
+{ for ( auto def=opt_defs; def->name; def++ )
+  { if ( def->atom.is_null() ) // lazily fill in atoms in lookup table
       def->atom = PlAtom(def->name);
     if ( def->atom == name )
     { def->action(options, opt[1]);
@@ -996,6 +949,9 @@ struct WriteOptdef
 
 #define WR_ODEF [](rocksdb::WriteOptions *options, PlTerm arg)
 
+// TODO: move write_optdefs into write_options(), remove the PlAtom(PlAtom::null),
+//       replacing WriteOptdef::name with PlAtom ... C++ will initialize the
+//       "static" const structure on first use.
 static WriteOptdef write_optdefs[] =
 { {         "sync",                           WR_ODEF {
     options->sync                           = arg.as_bool(); }, PlAtom(PlAtom::null) },
@@ -1019,7 +975,7 @@ static void
 lookup_write_optdef_and_apply(rocksdb::WriteOptions *options,
 			      WriteOptdef opt_defs[],
 			      PlAtom name, PlTerm opt)
-{ for(auto def=opt_defs; def->name; def++)
+{ for ( auto def=opt_defs; def->name; def++ )
   { if ( def->atom.is_null() ) // lazilly fill in atoms in lookup table
       def->atom = PlAtom(def->name);
     if ( def->atom == name )
@@ -1033,6 +989,14 @@ lookup_write_optdef_and_apply(rocksdb::WriteOptions *options,
 static void
 options_set_InfoLogLevel(rocksdb::Options *options, PlTerm arg)
 { rocksdb::InfoLogLevel log_level;
+
+  static const PlAtom ATOM_debug("debug");
+  static const PlAtom ATOM_info("info");
+  static const PlAtom ATOM_warn("warn");
+  static const PlAtom ATOM_error("error");
+  static const PlAtom ATOM_fatal("fatal");
+  static const PlAtom ATOM_header("header");
+
   const auto arg_a = arg.as_atom();
        if ( arg_a == ATOM_debug  ) log_level = rocksdb::DEBUG_LEVEL;
   else if ( arg_a == ATOM_info   ) log_level = rocksdb::INFO_LEVEL;
@@ -1231,12 +1195,15 @@ static Optdef optdefs[] =
   { nullptr, nullptr, PlAtom(PlAtom::null) }
 };
 
+// TODO: move optdefs into options(), remove the PlAtom(PlAtom::null),
+//       replacing Optdef::name with PlAtom ... C++ will initialize the
+//       "static" const structure on first use.
 
 static void
 lookup_optdef_and_apply(rocksdb::Options *options,
 			Optdef opt_defs[],
 			PlAtom name, PlTerm opt)
-{ for(auto def=opt_defs; def->name; def++)
+{ for ( auto def=opt_defs; def->name; def++ )
   { if ( def->atom.is_null() ) // lazilly fill in atoms in lookup table
       def->atom = PlAtom(def->name);
     if ( def->atom == name )
@@ -1260,8 +1227,17 @@ PREDICATE(rocks_open_, 3)
   int once = false;
   int read_only = false;
 
-  if ( !Plx_get_file_name(A1.C_, &fn, PL_FILE_OSPATH) )
-    return false;
+  static const PlAtom ATOM_key("key");
+  static const PlAtom ATOM_value("value");
+  static const PlAtom ATOM_alias("alias");
+  static const PlAtom ATOM_merge("merge");
+  static const PlAtom ATOM_open("open");
+  static const PlAtom ATOM_once("once");
+  static const PlAtom ATOM_mode("mode");
+  static const PlAtom ATOM_read_write("read_write");
+  static const PlAtom ATOM_read_only("read_only");
+
+  PlCheckFail(Plx_get_file_name(A1.C_, &fn, PL_FILE_OSPATH));
   PlTerm_tail tail(A3);
   PlTerm_var opt;
   while ( tail.next(opt) )
@@ -1309,8 +1285,7 @@ PREDICATE(rocks_open_, 3)
     }
   }
 
-  dbref *ref = static_cast<dbref *>(Plx_malloc(sizeof *ref));
-  *ref = null_dbref;
+  auto ref = new dbref();
   ref->merger         = merger;
   ref->builtin_merger = builtin_merger;
   ref->type.key       = key_type;
@@ -1320,22 +1295,20 @@ PREDICATE(rocks_open_, 3)
     ref->flags |= DB_OPEN_ONCE;
 
   try
-  { rocksdb::Status status;
-
-    if ( ref->merger.not_null() )
+  { if ( ref->merger.not_null() )
       options.merge_operator.reset(new PrologMergeOperator(ref));
     else if ( builtin_merger != MERGE_NONE )
       options.merge_operator.reset(new ListMergeOperator(ref));
     if ( read_only )
-      status = rocksdb::DB::OpenForReadOnly(options, fn, &ref->db);
+      ok_or_throw_fail(rocksdb::DB::OpenForReadOnly(options, fn, &ref->db));
     else
-      status = rocksdb::DB::Open(options, fn, &ref->db);
-    ok(status);
-    return unify_rocks(A2, ref);
+      ok_or_throw_fail(rocksdb::DB::Open(options, fn, &ref->db));
+    PlCheckFail(unify_rocks(A2, ref));
   } catch(...)
-  { Plx_free(ref);
+  { delete ref;
     throw;
   }
+  return true;
 }
 
 
@@ -1355,6 +1328,7 @@ PREDICATE(rocks_close, 1)
 }
 
 
+[[nodiscard]]
 static rocksdb::WriteOptions
 write_options(PlTerm options_term)
 { rocksdb::WriteOptions options;
@@ -1366,8 +1340,8 @@ write_options(PlTerm options_term)
 
     PlCheckFail(opt.name_arity(&name, &arity));
     if ( arity == 1 )
-    { lookup_write_optdef_and_apply(&options, write_optdefs, name, opt);
-    } else
+      lookup_write_optdef_and_apply(&options, write_optdefs, name, opt);
+    else
       throw PlTypeError("option", opt);
   }
   return options;
@@ -1380,7 +1354,7 @@ PREDICATE(rocks_put, 4)
 
   if ( ref->builtin_merger == MERGE_NONE )
   { auto value = get_slice(A3, ref->type.value);
-    ok(ref->db->Put(write_options(A4), key->slice(), value->slice()));
+    ok_or_throw_fail(ref->db->Put(write_options(A4), key->slice(), value->slice()));
   } else
   { PlTerm_tail list(A3);
     PlTerm_var tmp;
@@ -1394,7 +1368,7 @@ PREDICATE(rocks_put, 4)
     if ( ref->builtin_merger == MERGE_SET )
       sort(&value, ref->type.value);
 
-    ok(ref->db->Put(write_options(A4), key->slice(), value));
+    ok_or_throw_fail(ref->db->Put(write_options(A4), key->slice(), value));
   }
 
   return true;
@@ -1405,14 +1379,15 @@ PREDICATE(rocks_merge, 4)
   if ( ref->merger.is_null() && ref->builtin_merger == MERGE_NONE )
     throw PlPermissionError("merge", "rocksdb", A1);
 
-  auto key = get_slice(A2, ref->type.key);
+  auto key = get_slice(A2,ref->type.key);
   auto value = get_slice(A3, ref->type.value);
 
-  ok(ref->db->Merge(write_options(A4), key->slice(), value->slice()));
+  ok_or_throw_fail(ref->db->Merge(write_options(A4), key->slice(), value->slice()));
 
   return true;
 }
 
+[[nodiscard]]
 static rocksdb::ReadOptions
 read_options(PlTerm options_term)
 { rocksdb::ReadOptions options;
@@ -1423,8 +1398,8 @@ read_options(PlTerm options_term)
     size_t arity;
     PlCheckFail(opt.name_arity(&name, &arity));
     if ( arity == 1 )
-    { lookup_read_optdef_and_apply(&options, read_optdefs, name, opt);
-    } else
+      lookup_read_optdef_and_apply(&options, read_optdefs, name, opt);
+    else
       throw PlTypeError("option", opt);
   }
   return options;
@@ -1435,41 +1410,53 @@ PREDICATE(rocks_get, 4)
   std::string value;
   auto key = get_slice(A2, ref->type.key);
 
-  return ( ok(ref->db->Get(read_options(A4), key->slice(), &value)) &&
-	   unify_value(A3, value, ref->builtin_merger, ref->type.value) );
+  ok_or_throw_fail(ref->db->Get(read_options(A4), key->slice(), &value));
+  return unify_value(A3, value, ref->builtin_merger, ref->type.value);
 }
 
 PREDICATE(rocks_delete, 3)
 { dbref *ref = get_rocks(A1);
   auto key = get_slice(A2, ref->type.key);
 
-  return ok(ref->db->Delete(write_options(A3), key->slice()));
+  ok_or_throw_fail(ref->db->Delete(write_options(A3), key->slice()));
+  return true;
 }
 
 typedef enum
-{ ENUM_ALL,
-  ENUM_FROM,
+{ ENUM_NOT_INITIALIZED,
+  ENUM_ALL,  // TODO: not used?
+  ENUM_FROM, // TODO: not used?
   ENUM_PREFIX
 } enum_type;
 
-typedef struct
-{ rocksdb::Iterator *it;
+struct enum_state
+{
+  rocksdb::Iterator *it; // TODO: use smart ptr to auto delete
   dbref    *ref;
   enum_type type;
   struct
   { size_t length;
     char  *string;
-  } prefix;
-  int saved;
-} enum_state;
+  } prefix; // TODO: use std::string
+  bool saved;
+};
 
+static enum_state null_enum_state =
+{ .it     = nullptr,
+  .ref    = nullptr,
+  .type   = ENUM_NOT_INITIALIZED,
+  .prefix = { .length=0, .string=nullptr },
+  .saved  = false
+};
+
+[[nodiscard]]
 static enum_state *
 save_enum_state(enum_state *state)
 { if ( !state->saved )
   { auto copy = static_cast<enum_state *>(malloc(sizeof (enum_state)));
     *copy = *state;
     if ( copy->prefix.string )
-    { copy->prefix.string = static_cast<char *>(malloc(copy->prefix.length+1));
+    { copy->prefix.string = new char[copy->prefix.length+1];
       memcpy(copy->prefix.string, state->prefix.string, copy->prefix.length+1);
     }
     copy->saved = true;
@@ -1479,17 +1466,18 @@ save_enum_state(enum_state *state)
   return state;
 }
 
-static void
+static void // TODO: change this to ~enum_state()
 free_enum_state(enum_state *state)
 { if ( state->saved )
   { if ( state->it )
       delete state->it;
     if ( state->prefix.string )
-      free(state->prefix.string);
+      delete [] state->prefix.string;
     free(state);
   }
 }
 
+[[nodiscard]]
 static bool
 unify_enum_key(PlTerm t, const enum_state *state)
 { if ( state->type == ENUM_PREFIX )
@@ -1509,6 +1497,7 @@ unify_enum_key(PlTerm t, const enum_state *state)
 }
 
 
+[[nodiscard]]
 static bool
 enum_key_prefix(const enum_state *state)
 { if ( state->type == ENUM_PREFIX )
@@ -1520,10 +1509,13 @@ enum_key_prefix(const enum_state *state)
 }
 
 
+[[nodiscard]]
 static foreign_t
 rocks_enum(PlTermv PL_av, int ac, enum_type type, PlControl handle, rocksdb::ReadOptions options)
-{ enum_state state_buf = {0};
+{ enum_state state_buf = null_enum_state;
   enum_state *state = &state_buf;
+
+  // TODO: PlForeignContextPtr<enum_state *> ctxt(handle)
 
   switch ( handle.foreign_control() )
   { case PL_FIRST_CALL:
@@ -1553,7 +1545,7 @@ rocks_enum(PlTermv PL_av, int ac, enum_type type, PlControl handle, rocksdb::Rea
       state = static_cast<enum_state *>(handle.foreign_context_address());
     next:
     { PlFrame fr;
-      for(; state->it->Valid(); state->it->Next())
+      for ( ; state->it->Valid(); state->it->Next() )
       { if ( unify_enum_key(A2, state) &&
 	     unify_value(A3, state->it->value(),
 			 state->ref->builtin_merger, state->ref->type.value) )
@@ -1578,7 +1570,7 @@ rocks_enum(PlTermv PL_av, int ac, enum_type type, PlControl handle, rocksdb::Rea
       assert(0);
       return false;
   }
-  PL_fail;
+  return false;
 }
 
 PREDICATE_NONDET(rocks_enum, 4)
@@ -1593,13 +1585,13 @@ PREDICATE_NONDET(rocks_enum_prefix, 5)
 { return rocks_enum(PL_av, 4, ENUM_PREFIX, handle, read_options(A5));
 }
 
-static PlAtom ATOM_delete("delete");
-static PlAtom ATOM_put("put");
-
 static void
 batch_operation(const dbref *ref, rocksdb::WriteBatch &batch, PlTerm e)
 { PlAtom name(PlAtom::null);
   size_t arity;
+
+  static PlAtom ATOM_delete("delete");
+  static PlAtom ATOM_put("put");
 
   PlCheckFail(e.name_arity(&name, &arity));
   if ( ATOM_delete == name && arity == 1 )
@@ -1625,7 +1617,8 @@ PREDICATE(rocks_batch, 3)
   { batch_operation(ref, batch, e);
   }
 
-  return ok(ref->db->Write(write_options(A3), &batch));
+  ok_or_throw_fail(ref->db->Write(write_options(A3), &batch));
+  return true;
 }
 
 
