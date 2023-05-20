@@ -54,7 +54,7 @@
 #define DB_DESTROYED	0x0001		/* Was destroyed by user  */
 #define DB_OPEN_ONCE	0x0002		/* open(once) option */
 
-typedef enum
+enum blob_type
 { BLOB_ATOM = 0,			/* UTF-8 string as atom */
   BLOB_STRING,				/* UTF-8 string as string */
   BLOB_BINARY,				/* Byte string as string */
@@ -63,13 +63,13 @@ typedef enum
   BLOB_FLOAT32,				/* 32-bit IEEE float */
   BLOB_FLOAT64,				/* 64-bit IEEE double */
   BLOB_TERM				/* Arbitrary term */
-} blob_type;
+};
 
-typedef enum
+enum merger_t
 { MERGE_NONE = 0,
   MERGE_LIST,
   MERGE_SET
-} merger_t;
+};
 
 struct dbref
 {
@@ -1395,12 +1395,12 @@ PREDICATE(rocks_delete, 3)
   return true;
 }
 
-typedef enum
-{ ENUM_NOT_INITIALIZED,
+enum enum_type
+{ ENUM_NOT_INITIALIZED = 0,
   ENUM_ALL,  // TODO: not used?
   ENUM_FROM, // TODO: not used?
   ENUM_PREFIX
-} enum_type;
+};
 
 struct enum_state
 {
