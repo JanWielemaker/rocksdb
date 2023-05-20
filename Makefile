@@ -1,10 +1,9 @@
 #COFLAGS=-gdwarf-2 -g3
-# The following flags are the same as rocksdb uses, except that rocksdb also has -Werror
-# and doesn't have the conversion flags in ADDED_CPPFLAGS
-# TODO: Add -Werror
-# TODO: Options that work with clang
-ADDED_CPPFLAGS=-Wconversion -Warith-conversion -Wsign-conversion -Wfloat-conversion -Wno-unused-parameter
-CPPFLAGS=-Wall -Wextra -Wsign-compare -Wshadow -Wunused-parameter -Woverloaded-virtual -Wnon-virtual-dtor -Wno-missing-field-initializers -Wno-invalid-offsetof $(ADDED_CPPFLAGS) -std=c++17 -O2 $(CFLAGS) $(COFLAGS) $(LDSOFLAGS) -Irocksdb/include
+
+# For development, specify the following:
+# ADDED_CPP_FLAGS= -Wsign-compare -Wshadow -Wunused-parameter -Woverloaded-virtual -Wnon-virtual-dtor -Wno-invalid-offsetof -Wconversion -Warith-conversion -Wsign-conversion -Wfloat-conversion -Wno-unused-parameter -Wno-missing-field-initializers
+
+CPPFLAGS=-Wall $(ADDED_CPPFLAGS) -std=c++17 -O2 $(CFLAGS) $(COFLAGS) $(LDSOFLAGS) -Irocksdb/include
 LIBROCKSDB=rocksdb/librocksdb.a
 ROCKSENV=ROCKSDB_DISABLE_JEMALLOC=1 ROCKSDB_DISABLE_TCMALLOC=1
 # DEBUG_LEVEL=0 implies -O2 without assertions and debug code
