@@ -110,6 +110,8 @@ struct alias_cell
   alias_cell *next;
 };
 
+// TODO: use std::hash_map or similar for alias_entries
+
 #define ALIAS_HASH_SIZE 64
 
 std::mutex alias_lock;
@@ -139,26 +141,24 @@ static void
 rocks_alias(PlAtom name, PlAtom symbol)
 { auto key = atom_hash(name);
 
-  alias_lock.lock();
+  std::lock_guard<std::mutex> alias_lock_(alias_lock);
   if ( rocks_get_alias(name).is_null() )
   { auto c = new alias_cell(name, symbol, alias_entries[key]);
     alias_entries[key] = c;
     c->name.register_ref();
     c->symbol.register_ref();
-    alias_lock.unlock();
   } else
-  { alias_lock.unlock();
-    throw PlPermissionError("alias", "rocksdb", PlTerm_atom(name));
+  { throw PlPermissionError("alias", "rocksdb", PlTerm_atom(name));
   }
 }
 
 static void
 rocks_unalias(PlAtom name)
 { auto key = atom_hash(name);
-  alias_cell *c, *prev=nullptr;
+  alias_cell *prev=nullptr;
 
-  alias_lock.lock();
-  for ( c = alias_entries[key]; c; prev=c, c = c->next )
+  std::lock_guard<std::mutex> alias_lock_(alias_lock);
+  for ( auto c = alias_entries[key]; c; prev=c, c = c->next )
   { if ( c->name == name )
     { if ( prev )
 	prev->next = c->next;
@@ -171,7 +171,6 @@ rocks_unalias(PlAtom name)
       break;
     }
   }
-  alias_lock.unlock();
 }
 
 
@@ -315,9 +314,9 @@ get_rocks(PlTerm t, bool warn=true)
     t.get_atom_ex(&a);
   if ( t.not_null() )
   { for ( int i=0; i<2 && a.not_null(); i++ )
-    { dbref *ref;
+    { dbref *ref = symbol_dbref(a);
 
-      if ( (ref=symbol_dbref(a)) )
+      if ( ref )
       { if ( !(ref->flags & DB_DESTROYED) )
 	{ return ref;
 	} else if ( warn )
@@ -724,7 +723,7 @@ cmp_number(const void *v1, const void *v2)
 template<typename Number_t>
 static void
 sort_numbers(std::string *str)
-{ auto s = const_cast<char *>(str->data());
+{ auto s = str->data();
   auto len = str->length();
   if ( len == 0 )
     return;
