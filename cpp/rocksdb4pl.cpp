@@ -101,52 +101,36 @@ struct dbref
 		 *	      ALIAS		*
 		 *******************************/
 
-struct alias_cell
-{
-  alias_cell(PlAtom _name, PlAtom _symbol, alias_cell *_next)
-    : name(_name), symbol(_symbol), next(_next) { }
-  PlAtom      name;
-  PlAtom      symbol;
-  alias_cell *next;
-};
+std::mutex rocksdb4pl_alias_lock; // global
+// TODO: Define the necessary operators for PlAtom, so that it can be
+//       the key instead of atom_t.
+static std::map<atom_t, PlAtom> alias_entries;
 
-// TODO: use std::hash_map or similar for alias_entries
-
-#define ALIAS_HASH_SIZE 64
-
-std::mutex alias_lock;
-static unsigned int alias_size = ALIAS_HASH_SIZE;
-static alias_cell *alias_entries[ALIAS_HASH_SIZE];
-
+// rocks_get_alias() assumes that rocksdb4pl_alias_lock has been acquired
 [[nodiscard]]
-static unsigned int
-atom_hash(PlAtom a)
-{ return static_cast<unsigned int>(a.C_>>7) % alias_size;
+static PlAtom
+rocks_get_alias(PlAtom name)
+{ auto lookup = alias_entries.find(name.C_);
+  if ( lookup == alias_entries.end() )
+    return PlAtom(PlAtom::null);
+  else
+    return lookup->second;
 }
 
 [[nodiscard]]
 static PlAtom
-rocks_get_alias(PlAtom name)
-{ for ( alias_cell *c = alias_entries[atom_hash(name)];
-      c;
-      c = c->next )
-  { if ( c->name == name )
-      return c->symbol;
-  }
-
-  return PlAtom(PlAtom::null);
+rocks_get_alias_locked(PlAtom name)
+{ std::lock_guard<std::mutex> alias_lock_(rocksdb4pl_alias_lock);
+  return rocks_get_alias(name);
 }
 
 static void
 rocks_alias(PlAtom name, PlAtom symbol)
-{ auto key = atom_hash(name);
-
-  std::lock_guard<std::mutex> alias_lock_(alias_lock);
+{ std::lock_guard<std::mutex> alias_lock_(rocksdb4pl_alias_lock);
   if ( rocks_get_alias(name).is_null() )
-  { auto c = new alias_cell(name, symbol, alias_entries[key]);
-    alias_entries[key] = c;
-    c->name.register_ref();
-    c->symbol.register_ref();
+  { alias_entries.insert(std::make_pair(name.C_, symbol));
+    name.register_ref();
+    symbol.register_ref();
   } else
   { throw PlPermissionError("alias", "rocksdb", PlTerm_atom(name));
   }
@@ -154,23 +138,13 @@ rocks_alias(PlAtom name, PlAtom symbol)
 
 static void
 rocks_unalias(PlAtom name)
-{ auto key = atom_hash(name);
-  alias_cell *prev=nullptr;
-
-  std::lock_guard<std::mutex> alias_lock_(alias_lock);
-  for ( auto c = alias_entries[key]; c; prev=c, c = c->next )
-  { if ( c->name == name )
-    { if ( prev )
-	prev->next = c->next;
-      else
-	alias_entries[key] = c->next;
-      c->name.unregister_ref();
-      c->symbol.unregister_ref();
-      delete c;
-
-      break;
-    }
-  }
+{ std::lock_guard<std::mutex> alias_lock_(rocksdb4pl_alias_lock);
+  auto lookup = alias_entries.find(name.C_);
+  if ( lookup == alias_entries.end() )
+    return;
+  name.unregister_ref();
+  lookup->second.unregister_ref();  // alias_entries[name].unregister_ref()
+  alias_entries.erase(lookup);
 }
 
 
@@ -324,7 +298,7 @@ get_rocks(PlTerm t, bool warn=true)
 	}
       }
 
-      a = rocks_get_alias(a);
+      a = rocks_get_alias_locked(a);
     }
 
     throw PlExistenceError("rocksdb", t);
@@ -1275,7 +1249,7 @@ PREDICATE(rocks_open_, 3)
   }
 
   if ( alias.not_null() && once )
-  { PlAtom existing = rocks_get_alias(alias);
+  { PlAtom existing = rocks_get_alias_locked(alias);
     if ( existing.not_null() )
     { dbref *eref;
       if ( (eref=symbol_dbref(existing)) &&
