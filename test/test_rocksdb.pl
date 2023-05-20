@@ -331,7 +331,7 @@ test(basic, [cleanup(delete_db)]) :-
 :- begin_tests(enum, [cleanup(delete_db)]).
 
 test(enum,
-     [ Keys = ["aap", "aapje", "noot"],
+     [ Keys == ["aap", "aapje", "noot"],
        cleanup(delete_db)
      ]) :-
 	test_db(Dir),

@@ -1431,51 +1431,14 @@ typedef enum
 
 struct enum_state
 {
-  rocksdb::Iterator *it; // TODO: use smart ptr to auto delete
+  enum_state(dbref *_ref)
+    : ref(_ref), type(ENUM_NOT_INITIALIZED)
+  { }
+  std::unique_ptr<rocksdb::Iterator> it;
   dbref    *ref;
   enum_type type;
-  struct
-  { size_t length;
-    char  *string;
-  } prefix; // TODO: use std::string
-  bool saved;
+  std::string prefix;
 };
-
-static enum_state null_enum_state =
-{ .it     = nullptr,
-  .ref    = nullptr,
-  .type   = ENUM_NOT_INITIALIZED,
-  .prefix = { .length=0, .string=nullptr },
-  .saved  = false
-};
-
-[[nodiscard]]
-static enum_state *
-save_enum_state(enum_state *state)
-{ if ( !state->saved )
-  { auto copy = static_cast<enum_state *>(malloc(sizeof (enum_state)));
-    *copy = *state;
-    if ( copy->prefix.string )
-    { copy->prefix.string = new char[copy->prefix.length+1];
-      memcpy(copy->prefix.string, state->prefix.string, copy->prefix.length+1);
-    }
-    copy->saved = true;
-    return copy;
-  }
-
-  return state;
-}
-
-static void // TODO: change this to ~enum_state()
-free_enum_state(enum_state *state)
-{ if ( state->saved )
-  { if ( state->it )
-      delete state->it;
-    if ( state->prefix.string )
-      delete [] state->prefix.string;
-    free(state);
-  }
-}
 
 [[nodiscard]]
 static bool
@@ -1483,10 +1446,11 @@ unify_enum_key(PlTerm t, const enum_state *state)
 { if ( state->type == ENUM_PREFIX )
   { rocksdb::Slice k(state->it->key());
 
-    if ( k.size_ >= state->prefix.length &&
-	 memcmp(k.data_, state->prefix.string, state->prefix.length) == 0 )
-    { k.data_ += state->prefix.length;
-      k.size_ -= state->prefix.length;
+    // TODO: use std::string's compare
+    if ( k.size_ >= state->prefix.length() &&
+	 memcmp(k.data_, state->prefix.data(), state->prefix.length()) == 0 )
+    { k.data_ += state->prefix.length();
+      k.size_ -= state->prefix.length();
 
       return unify(t, k, state->ref->type.key);
     } else
@@ -1502,8 +1466,8 @@ static bool
 enum_key_prefix(const enum_state *state)
 { if ( state->type == ENUM_PREFIX )
   { rocksdb::Slice k(state->it->key());
-    return ( k.size_ >= state->prefix.length &&
-	     memcmp(k.data_, state->prefix.string, state->prefix.length) == 0 );
+    return ( k.size_ >= state->prefix.length() &&
+	     memcmp(k.data_, state->prefix.data(), state->prefix.length()) == 0 );
   } else
     return true;
 }
@@ -1512,14 +1476,11 @@ enum_key_prefix(const enum_state *state)
 [[nodiscard]]
 static foreign_t
 rocks_enum(PlTermv PL_av, int ac, enum_type type, PlControl handle, rocksdb::ReadOptions options)
-{ enum_state state_buf = null_enum_state;
-  enum_state *state = &state_buf;
-
-  // TODO: PlForeignContextPtr<enum_state *> ctxt(handle)
+{ PlForeignContextPtr<enum_state> state(handle);
 
   switch ( handle.foreign_control() )
   { case PL_FIRST_CALL:
-      state->ref = get_rocks(A1);
+      state.set(new enum_state(get_rocks(A1)));
       if ( ac >= 4 )
       { if ( !(state->ref->type.key == BLOB_ATOM ||
 	       state->ref->type.key == BLOB_STRING ||
@@ -1529,42 +1490,35 @@ rocks_enum(PlTermv PL_av, int ac, enum_type type, PlControl handle, rocksdb::Rea
 	std::string prefix = A4.get_nchars(REP_UTF8|CVT_IN|CVT_EXCEPTION);
 
 	if ( type == ENUM_PREFIX )
-	{ state->prefix.length = prefix.size();
-	  state->prefix.string = prefix.data();
+        { state->prefix = prefix;
 	}
-	state->it = state->ref->db->NewIterator(options);
+	state->it.reset(state->ref->db->NewIterator(options));
 	state->it->Seek(prefix);
       } else
-      { state->it = state->ref->db->NewIterator(options);
+      { state->it.reset(state->ref->db->NewIterator(options));
 	state->it->SeekToFirst();
       }
       state->type = type;
-      state->saved = false;
-      goto next;
+      [[fallthrough]];
     case PL_REDO:
-      state = static_cast<enum_state *>(handle.foreign_context_address());
-    next:
     { PlFrame fr;
       for ( ; state->it->Valid(); state->it->Next() )
-      { if ( unify_enum_key(A2, state) &&
+      { if ( unify_enum_key(A2, state.get()) &&
 	     unify_value(A3, state->it->value(),
 			 state->ref->builtin_merger, state->ref->type.value) )
 	{ state->it->Next();
-	  if ( state->it->Valid() && enum_key_prefix(state) )
-	  { PL_retry_address(save_enum_state(state));
+	  if ( state->it->Valid() && enum_key_prefix(state.get()) )
+          { state.keep();
+            PL_retry_address(state.get());
 	  } else
-	  { free_enum_state(state);
-	    return true;
+	  { return true;
 	  }
 	}
 	fr.rewind();
       }
-      free_enum_state(state);
       return false;
     }
     case PL_PRUNED:
-      state = static_cast<enum_state *>(handle.foreign_context_address());
-      free_enum_state(state);
       return true;
     default:
       assert(0);
