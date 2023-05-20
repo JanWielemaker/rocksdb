@@ -33,7 +33,7 @@
     POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include <assert.h>
+#include <cassert>
 #include <mutex>
 #include <rocksdb/db.h>
 #include <rocksdb/env.h>
@@ -85,8 +85,9 @@ struct dbref
   { }
 
   rocksdb::DB	*db;			/* DB handle */
+  std::string    pathname;              /* DB's file name (for debugging) */
   PlAtom         symbol;		/* associated symbol */
-  PlAtom	 name;			/* alias name */
+  PlAtom	 name;			/* alias name (can be PlAtom::null) */
   int	         flags;			/* flags */
   merger_t	 builtin_merger;	/* C++ Merger */
   PlRecord	 merger;		/* merge option */
@@ -155,10 +156,15 @@ rocks_unalias(PlAtom name)
 [[nodiscard]]
 static bool
 write_rocks_ref_(IOSTREAM *s, PlAtom eref, int flags)
-{ auto refp = static_cast<dbref **>(eref.blob_data(nullptr, nullptr));
-  auto ref  = *refp;
+{ auto ref = *static_cast<dbref **>(eref.blob_data(nullptr, nullptr));
 
-  Sfprintf(s, "<rocksdb>(%p)", ref);
+  PlStringBuffers _string_buffers;
+  Sfprintf(s, "<rocksdb>(%p", ref);
+  Sfprintf(s, ",path=%s", ref->pathname.c_str());
+  // TODO: ref->name.as_wstring()
+  if ( ref->name.not_null() )
+    Sfprintf(s, ",alias=%Ws", Plx_atom_wchars(ref->name.C_, nullptr));
+  Sfprintf(s, "%s", ")");
   if ( flags&PL_WRT_NEWLINE )
     Sfprintf(s, "\n");
   return true;
@@ -178,9 +184,9 @@ GC a rocks dbref blob from the atom garbage collector.
 [[nodiscard]]
 static bool
 release_rocks_ref_(PlAtom aref)
-{ auto refp = static_cast<dbref **>(aref.blob_data(nullptr, nullptr));
-  auto ref  = *refp;
+{ auto ref = *static_cast<dbref **>(aref.blob_data(nullptr, nullptr));
 
+  // TODO: remove this assertion?
   assert(ref->name.is_null());
 
   { auto db = ref->db;
@@ -204,8 +210,7 @@ release_rocks_ref(atom_t aref)
 [[nodiscard]]
 static bool
 save_rocks_(PlAtom aref, IOSTREAM *fd)
-{ auto refp = static_cast<dbref **>(aref.blob_data(nullptr, nullptr));
-  auto ref  = *refp;
+{ auto ref = *static_cast<dbref **>(aref.blob_data(nullptr, nullptr));
   (void)fd;
 
   return PL_warning("Cannot save reference to <rocksdb>(%p)", ref);
@@ -1264,6 +1269,7 @@ PREDICATE(rocks_open_, 3)
   ref->type.key       = key_type;
   ref->type.value     = value_type;
   ref->name           = alias;
+  ref->pathname       = fn;
   if ( once )
     ref->flags |= DB_OPEN_ONCE;
 

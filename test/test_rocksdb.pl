@@ -55,14 +55,15 @@ test_rocksdb :-
 		    merge,
 		    builtin_merge,
 		    properties,
-		    enum
+		    enum,
+                    alias
 		  ]).
 
 :- begin_tests(rocks, [cleanup(delete_db)]).
 
 test(basic, [Noot == noot,
 	     setup(setup_db(Dir, RocksDB)),
-	     cleanup(cleaup_db(Dir, RocksDB))]) :-
+	     cleanup(cleanup_db(Dir, RocksDB))]) :-
 	rocks_put(RocksDB, aap, noot),
 	rocks_get(RocksDB, aap, Noot),
 	rocks_delete(RocksDB, aap),
@@ -70,7 +71,7 @@ test(basic, [Noot == noot,
 
 test(basic, [Vs_get_expect == Vs_get_actual,
 	     setup(setup_db(Dir, RocksDB, [key(atom), value(term)])),
-	     cleanup(cleaup_db(Dir, RocksDB))]) :-
+	     cleanup(cleanup_db(Dir, RocksDB))]) :-
 	% TODO: binary
 	KVs = [atom    - one,
 	       string  - "two",
@@ -95,7 +96,7 @@ assertion_key_not_found(RocksDB, Key) :-
 
 test(basic, [Noot == noot,
 	     setup(setup_db(Dir, RocksDB)),
-	     cleanup(cleaup_db(Dir, RocksDB))]) :-
+	     cleanup(cleanup_db(Dir, RocksDB))]) :-
 	rocks_put(RocksDB, aap, noot, [sync(true)]),
 	rocks_close(RocksDB),
 	rocks_open(Dir, RocksDB2, [mode(read_only)]),
@@ -349,6 +350,24 @@ test(enum,
 
 :- end_tests(enum).
 
+:- begin_tests(alias, [cleanup(delete_db)]).
+
+test(basic, [blocked(assertion_error),
+             Noot == noot,
+             setup(setup_db(Dir, _, [alias(rocks_db)])),
+             cleanup(cleanup_db(Dir, rocks_db))]) :-
+	rocks_put(rocks_db, aap, noot),
+	rocks_get(rocks_db, aap, Noot),
+	rocks_delete(rocks_db, aap),
+ 	assertion(\+ rocks_get(rocks_db, aap, _)).
+
+test(basic2, [blocked(assertion_error),
+              error(permission_error(alias,rocksdb,rocks_db)),
+              setup(setup_db(Dir, _, [alias(rocks_db)]))]) :-
+    rocks_open(Dir, _, [alias(rocks_db)]).
+
+:- end_tests(alias).
+
 		 /*******************************
 		 *	       UTIL		*
 		 *******************************/
@@ -375,6 +394,6 @@ setup_db(Dir, RocksDB, Options) :-
 % cleanup_db/2 does its best to close the database because, if there
 % is an error in the test case and the database isn't closed, it will
 % cause spurious errors from all the subsequent tests.
-cleaup_db(Dir, RocksDB) :-
+cleanup_db(Dir, RocksDB) :-
     catch(ignore(rocks_close(RocksDB)), _, true),
     delete_db(Dir).
