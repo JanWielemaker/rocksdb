@@ -131,6 +131,7 @@ test(options5, [cleanup(delete_db)]) :-
 	    rocks_open(Dir, RocksDB, [key(string), value(string), mode(read_write)]),
 	    rocks_put(RocksDB, "one", "àmímé níshíkíhéꜜbì"),
 	    rocks_close(RocksDB)).
+
 test(open_twice, [error(rocks_error(_),_), % TODO: error(rocks_error('IO error: lock hold by current process, acquire time 1657004085 acquiring thread 136471553664960: /tmp/test_rocksdb/LOCK: No locks available'),_)
 		  cleanup(delete_db)]) :-
 	test_db(Dir),
@@ -139,6 +140,7 @@ test(open_twice, [error(rocks_error(_),_), % TODO: error(rocks_error('IO error: 
 	    call_cleanup(rocks_open(Dir, RocksDB2, []),
 			 rocks_close(RocksDB2)),
 	    rocks_close(RocksDB1)).
+
 test(batch, [Pairs == [zus-noot],
 	     cleanup(delete_db)]) :-
 	test_db(Dir),

@@ -288,7 +288,8 @@ See rocks_open/3 for details.
 
 rocks_open(Dir, DB, Options0) :-
 	meta_options(is_meta, Options0, Options),
-	rocks_open_(Dir, DB, Options).
+        absolute_file_name(Dir, DirAbs),
+	rocks_open_(DirAbs, DB, Options).
 
 is_meta(merge).
 
