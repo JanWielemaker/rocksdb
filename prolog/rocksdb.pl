@@ -219,7 +219,8 @@ See rocks_open/3 for details.
 %	  - alias(+Name)
 %	  Give the database a name instead of using an anonymous
 %	  handle.  A named database is not subject to GC and must
-%	  be closed explicitly.
+%	  be closed explicitly. When the database is opened,
+%         RocksDB unifies with Name.
 %	  - open(+How)
 %	  If How is `once` and an alias is given, a second open simply
 %	  returns a handle to the already open database.
@@ -419,7 +420,7 @@ rocks_enum_from(RocksDB, Key, Value, Prefix) :-
 %
 %	True for all keys that start   with Prefix. Instead of returning
 %	the full key this predicate returns the _suffix_ of the matching
-%	key. This predicate  succeeds  deterministically   no  next  key
+%	key. This predicate  succeeds  deterministically if no next  key
 %	exists or the next key does not match Prefix.
 %
 %       Options are the same as for rocks_get/4.
