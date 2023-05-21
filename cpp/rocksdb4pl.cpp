@@ -45,7 +45,7 @@
 #include <SWI-Prolog.h>
 #include <SWI-cpp2.h>
 
-#include <SWI-cpp2.cpp> // TODO: this should possibly be separate
+#include <SWI-cpp2.cpp> // TODO: this should possibly be in a separate file
 
 		 /*******************************
 		 *	       SYMBOL		*
@@ -75,6 +75,7 @@ struct dbref
 {
   dbref()
     : db(             nullptr),
+      pathname(       PlAtom(PlAtom::null)),
       symbol(         PlAtom(PlAtom::null)),
       name(           PlAtom(PlAtom::null)),
       flags(          0),
@@ -84,8 +85,9 @@ struct dbref
                         .value = BLOB_ATOM})
   { }
 
+  // All the fields must be "unique" (e.g., no std::string, but PlAtom is OK)
   rocksdb::DB	*db;			/* DB handle */
-  std::string    pathname;              /* DB's file name (for debugging) */
+  PlAtom         pathname;              /* DB's absolute file name (for debugging) */
   PlAtom         symbol;		/* associated symbol */
   PlAtom	 name;			/* alias name (can be PlAtom::null) */
   int	         flags;			/* flags */
@@ -160,8 +162,9 @@ write_rocks_ref_(IOSTREAM *s, PlAtom eref, int flags)
 
   PlStringBuffers _string_buffers;
   Sfprintf(s, "<rocksdb>(%p", ref);
-  Sfprintf(s, ",path=%s", ref->pathname.c_str());
-  // TODO: ref->name.as_wstring()
+  // TODO: ref->pathname.as_wstring(), ref->name.as_wstring()
+  if ( ref->pathname.not_null() )
+    Sfprintf(s, ",path=%Ws", Plx_atom_wchars(ref->pathname.C_, nullptr));
   if ( ref->name.not_null() )
     Sfprintf(s, ",alias=%Ws", Plx_atom_wchars(ref->name.C_, nullptr));
   Sfprintf(s, "%s", ")");
@@ -1269,9 +1272,12 @@ PREDICATE(rocks_open_, 3)
   ref->type.key       = key_type;
   ref->type.value     = value_type;
   ref->name           = alias;
-  ref->pathname       = fn;
+  ref->pathname       = PlAtom(fn);
   if ( once )
     ref->flags |= DB_OPEN_ONCE;
+  ref->pathname.register_ref();
+  if ( ref->name.not_null() )
+    ref->name.register_ref();
 
   try
   { if ( ref->merger.not_null() )
@@ -1301,6 +1307,9 @@ PREDICATE(rocks_close, 1)
   { rocks_unalias(ref->name);
     ref->name.reset();
   }
+  ref->pathname.unregister_ref();
+  if ( ref->name.not_null() )
+    ref->name.unregister_ref();
 
   delete db;
   return true;
