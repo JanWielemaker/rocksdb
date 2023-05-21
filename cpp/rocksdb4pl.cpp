@@ -255,7 +255,7 @@ unify_rocks(PlTerm t, dbref *ref)
   { if ( ref->symbol.is_null() )
     { PlTerm_var tmp;
       PlCheckFail(tmp.unify_blob(&ref, sizeof ref, &rocks_blob));
-      ref->symbol = t.as_atom();
+      ref->symbol = tmp.as_atom();
       rocks_alias(ref->name, ref->symbol);
     }
     return t.unify_atom(ref->name);

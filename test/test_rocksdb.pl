@@ -352,19 +352,15 @@ test(enum,
 
 :- begin_tests(alias, [cleanup(delete_db)]).
 
-test(basic, [blocked(assertion_error),
-             Noot == noot,
-             setup(setup_db(Dir, _, [alias(rocks_db)])),
-             cleanup(cleanup_db(Dir, rocks_db))]) :-
-	rocks_put(rocks_db, aap, noot),
-	rocks_get(rocks_db, aap, Noot),
-	rocks_delete(rocks_db, aap),
- 	assertion(\+ rocks_get(rocks_db, aap, _)).
-
-test(basic2, [blocked(assertion_error),
-              error(permission_error(alias,rocksdb,rocks_db)),
-              setup(setup_db(Dir, _, [alias(rocks_db)]))]) :-
-    rocks_open(Dir, _, [alias(rocks_db)]).
+% rocks:basic, but with a named database
+test(basic, [Noot == noot,
+             setup(setup_db(Dir, DB, [alias('DB')])),
+             cleanup(cleanup_db(Dir, DB))]) :-
+	assertion(DB == 'DB'),
+	rocks_put('DB', aap, noot),
+	rocks_get('DB', aap, Noot),
+	rocks_delete('DB', aap),
+ 	assertion(\+ rocks_get('DB', aap, _)).
 
 :- end_tests(alias).
 
