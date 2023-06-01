@@ -71,6 +71,17 @@ enum merger_t
   MERGE_SET
 };
 
+// TODO: rocks_blob.flags has PL_BLOB_UNIQUE, which means that the
+//       contents of a dbref object must be "unique". Therefore, none
+//       of the fields can be something like std::string because the
+//       atom lookup uses byte comparison and std::string contains a
+//       hidden pointer that is different for each instance. However,
+//       the `merger` field is created using PlTerm::record(), which
+//       uses PL_record(), which would result in different values even
+//       if the underlying terms are identical.
+//   ... therefore, we should probably remove the PL_BLOB_UNIQUE and
+//       also should change the blob from being a dbref** to being a
+//       dbref*.
 struct dbref
 {
   dbref()
@@ -145,6 +156,11 @@ rocks_unalias(PlAtom name)
   auto lookup = alias_entries.find(name.C_);
   if ( lookup == alias_entries.end() )
     return;
+  // TODO: As an alternative to removing the entry, leave it in place
+  //       (with flags&DB_DESTROYED showing that it's been closed or
+  //       with the value as PlAtom::null), so that rocks_close/1 can
+  //       distinguish an alias lookup that should throw a
+  //       PlExistenceError because it's never been opened.
   name.unregister_ref();
   lookup->second.unregister_ref();  // alias_entries[name].unregister_ref()
   alias_entries.erase(lookup);
@@ -160,13 +176,13 @@ static bool
 write_rocks_ref_(IOSTREAM *s, PlAtom eref, int flags)
 { auto ref = *static_cast<dbref **>(eref.blob_data(nullptr, nullptr));
 
-  PlStringBuffers _string_buffers;
   Sfprintf(s, "<rocksdb>(%p", ref);
-  // TODO: ref->pathname.as_wstring(), ref->name.as_wstring()
   if ( ref->pathname.not_null() )
-    Sfprintf(s, ",path=%Ws", Plx_atom_wchars(ref->pathname.C_, nullptr));
+    Sfprintf(s, ",path=%Ws", ref->pathname.as_wstring().c_str());
   if ( ref->name.not_null() )
-    Sfprintf(s, ",alias=%Ws", Plx_atom_wchars(ref->name.C_, nullptr));
+    Sfprintf(s, ",alias=%Ws", ref->name.as_wstring().c_str());
+  if ( ref->flags & DB_DESTROYED )
+    Sfprintf(s, ",CLOSED");
   Sfprintf(s, "%s", ")");
   if ( flags&PL_WRT_NEWLINE )
     Sfprintf(s, "\n");
@@ -199,7 +215,7 @@ release_rocks_ref_(PlAtom aref)
     }
   }
   ref->merger.erase();
-  delete ref;
+  delete ref; // TODO: delete **ref is done by system
 
   return true;
 }
@@ -272,13 +288,12 @@ unify_rocks(PlTerm t, dbref *ref)
 [[nodiscard]]
 static dbref *
 symbol_dbref(PlAtom symbol)
-{ void *data;
-  size_t len;
+{ size_t len;
   PL_blob_t *type;
+  auto data = static_cast<dbref **>(symbol.blob_data(&len, &type));
 
-  if ( (data=symbol.blob_data(&len, &type)) && type == &rocks_blob )
-  { auto erd = static_cast<dbref **>(data);
-    return *erd;
+  if ( data && type == &rocks_blob )
+    { return *data;
   }
 
   return static_cast<dbref *>(nullptr);
@@ -287,32 +302,20 @@ symbol_dbref(PlAtom symbol)
 
 [[nodiscard]]
 static dbref *
-get_rocks(PlTerm t, bool warn=true)
-{ PlAtom a(PlAtom::null);
+get_rocks(PlTerm t, bool throw_if_closed=true)
+{ PlAtom a(t.as_atom()); // Throws type error if not an atom
 
-  if ( warn )
-    a = t.as_atom();
-  else
-    t.get_atom_ex(&a);
-  if ( t.not_null() )
-  { for ( int i=0; i<2 && a.not_null(); i++ )
-    { dbref *ref = symbol_dbref(a);
-
-      if ( ref )
-      { if ( !(ref->flags & DB_DESTROYED) )
-	{ return ref;
-	} else if ( warn )
-	{ throw PlExistenceError("rocksdb", t);
-	}
-      }
-
-      a = rocks_get_alias_locked(a);
-    }
-
-    throw PlExistenceError("rocksdb", t);
+  auto ref = symbol_dbref(a);
+  if ( ! ref )
+  { a = rocks_get_alias_locked(a);
+    if ( a.not_null() )
+      ref = symbol_dbref(a);
   }
+  if ( throw_if_closed &&
+       ( !ref || (ref->flags & DB_DESTROYED) ) )
+    throw PlExistenceError("rocksdb", t);
 
-  throw PlExistenceError("rocksdb", t);
+  return ref;
 }
 
 
@@ -1199,14 +1202,14 @@ lookup_optdef_and_apply(rocksdb::Options *options,
 PREDICATE(rocks_open_, 3)
 { rocksdb::Options options;
   options.create_if_missing = true;
-  char *fn;
+  char *fn; // from A1 - assumes that it's already absolute file name
   blob_type key_type   = BLOB_ATOM;
   blob_type value_type = BLOB_ATOM;
   merger_t builtin_merger = MERGE_NONE;
   PlAtom alias(PlAtom::null);
   PlRecord merger(PlRecord::null);
-  int once = false;
-  int read_only = false;
+  bool once = false;
+  bool read_only = false;
 
   static const PlAtom ATOM_key("key");
   static const PlAtom ATOM_value("value");
@@ -1226,7 +1229,7 @@ PREDICATE(rocks_open_, 3)
     size_t arity;
 
     PlCheckFail(opt.name_arity(&name, &arity));
-    if (  arity == 1 )
+    if ( arity == 1 )
     { if ( ATOM_key == name )
 	get_blob_type(opt[1], &key_type, static_cast<merger_t *>(nullptr));
       else if ( ATOM_value == name )
@@ -1259,9 +1262,8 @@ PREDICATE(rocks_open_, 3)
   if ( alias.not_null() && once )
   { PlAtom existing = rocks_get_alias_locked(alias);
     if ( existing.not_null() )
-    { dbref *eref;
-      if ( (eref=symbol_dbref(existing)) &&
-	   (eref->flags&DB_OPEN_ONCE) )
+    { auto eref = symbol_dbref(existing);
+      if ( eref && (eref->flags&DB_OPEN_ONCE) )
 	return A2.unify_atom(existing);
     }
   }
@@ -1289,7 +1291,7 @@ PREDICATE(rocks_open_, 3)
     else
       ok_or_throw_fail(rocksdb::DB::Open(options, fn, &ref->db));
     PlCheckFail(unify_rocks(A2, ref));
-  } catch(...)
+  } catch(...) // TODO - better to do this with a unique_ptr or similar
   { delete ref;
     throw;
   }
@@ -1298,8 +1300,10 @@ PREDICATE(rocks_open_, 3)
 
 
 PREDICATE(rocks_close, 1)
-{ dbref *ref = get_rocks(A1);
-  rocksdb::DB* db = ref->db;
+{ dbref *ref = get_rocks(A1, false);
+  if ( !ref )
+    return true;
+  auto db = ref->db;
 
   ref->db = nullptr;
   ref->flags |= DB_DESTROYED;
