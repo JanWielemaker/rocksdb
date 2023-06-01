@@ -51,8 +51,6 @@
 		 *	       SYMBOL		*
 		 *******************************/
 
-#define DB_DESTROYED	0x0001		/* Was destroyed by user  */
-
 enum blob_type
 { BLOB_ATOM = 0,			/* UTF-8 string as atom */
   BLOB_STRING,				/* UTF-8 string as string */
@@ -88,7 +86,6 @@ struct dbref
       pathname(       PlAtom(PlAtom::null)),
       symbol(         PlAtom(PlAtom::null)),
       name(           PlAtom(PlAtom::null)),
-      flags(          0),
       builtin_merger( MERGE_NONE),
       merger(         PlRecord(PlRecord::null)),
       type(           { .key   = BLOB_ATOM,
@@ -100,7 +97,6 @@ struct dbref
   PlAtom         pathname;              /* DB's absolute file name (for debugging) */
   PlAtom         symbol;		/* associated symbol */
   PlAtom	 name;			/* alias name (can be PlAtom::null) */
-  int	         flags;			/* flags */
   merger_t	 builtin_merger;	/* C++ Merger */
   PlRecord	 merger;		/* merge option */
   struct
@@ -156,7 +152,7 @@ rocks_unalias(PlAtom name)
   if ( lookup == alias_entries.end() )
     return;
   // TODO: As an alternative to removing the entry, leave it in place
-  //       (with flags&DB_DESTROYED showing that it's been closed or
+  //       (with db==nullptr showing that it's been closed; or
   //       with the value as PlAtom::null), so that rocks_close/1 can
   //       distinguish an alias lookup that should throw a
   //       PlExistenceError because it's never been opened.
@@ -180,7 +176,7 @@ write_rocks_ref_(IOSTREAM *s, PlAtom eref, int flags)
     Sfprintf(s, ",path=%Ws", ref->pathname.as_wstring().c_str());
   if ( ref->name.not_null() )
     Sfprintf(s, ",alias=%Ws", ref->name.as_wstring().c_str());
-  if ( ref->flags & DB_DESTROYED )
+  if ( !ref->db )
     Sfprintf(s, ",CLOSED");
   Sfprintf(s, "%s", ")");
   if ( flags&PL_WRT_NEWLINE )
@@ -311,7 +307,7 @@ get_rocks(PlTerm t, bool throw_if_closed=true)
       ref = symbol_dbref(a);
   }
   if ( throw_if_closed &&
-       ( !ref || (ref->flags & DB_DESTROYED) ) )
+       ( !ref || !ref->db ) )
     throw PlExistenceError("rocksdb", t);
 
   return ref;
@@ -1295,7 +1291,6 @@ PREDICATE(rocks_close, 1)
   auto db = ref->db;
 
   ref->db = nullptr;
-  ref->flags |= DB_DESTROYED;
   if ( ref->name.not_null() )
   { rocks_unalias(ref->name);
     ref->name.reset();
