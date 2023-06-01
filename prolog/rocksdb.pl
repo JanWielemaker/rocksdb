@@ -281,9 +281,12 @@ See rocks_open/3 for details.
 
 %
 % @bug You must call rocks_close(Directory) to ensure clean shutdown
-%      Failure to call rdb_close/1 usually doesn't result in data
-%      loss because rocksdb can recover, depending on the setting
-%      of the `sync` option.
+%	Failure to call rdb_close/1 usually doesn't result in data
+%	loss because rocksdb can recover, depending on the setting of
+%	the `sync` option. However, it is recommended that you do a
+%	clean shutdown if possible, such as using at_halt/1 or
+%	setup_call_cleanup/3 is used to ensure clean shutdown.
+
 % @see https://github.com/facebook/rocksdb/wiki/Known-Issues
 
 rocks_open(Dir, DB, Options0) :-
@@ -296,8 +299,20 @@ is_meta(merge).
 
 %!	rocks_close(+RocksDB) is det.
 %
-%	Destroy the RocksDB handle.  Note   that  anonymous  handles are
-%	subject to (atom) garbage collection.
+%	Destroy the RocksDB handle.  Note that anonymous handles are
+%	subject to (atom) garbage collection, which will call
+%	rocks_close/1 as part of the garbage collection; however,
+%	there is no guarantee that an anonymous handle will be garbage
+%	collected, so it is suggested that at_halt/1 or
+%	setup_call_cleanup/3 is used to ensure that rocks_close/1 is
+%	called.
+%
+%	rocks_close/1 throws an existence error if RocksDB isn't a
+%	valid handle or alias from rocks_open/3.  If RocksDB is an
+%	anonymous handle that has been closed, rocks_close/1 silently
+%	succeeds; if it's an alias name that's already been closed, an
+%	existence error is raised (this behavior may change in
+%	future).
 
 %!	rocks_put(+RocksDB, +Key, +Value) is det.
 %!      rocks_put(+RocksDB, +Key, +Value, Options) is det.

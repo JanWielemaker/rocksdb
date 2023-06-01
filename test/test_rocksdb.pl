@@ -348,7 +348,8 @@ test(enum,
 	findall(Key, rocks_enum_from(RocksDB, Key, _, aap), Keys),
 	rocks_enum_prefix(RocksDB, Rest, _, aapj),
 	assertion(Rest == "e"),
-	rocks_close(RocksDB).
+	rocks_close(RocksDB),   % test double-close
+        rocks_close(RocksDB).
 
 :- end_tests(enum).
 
@@ -362,7 +363,13 @@ test(basic, [Noot == noot,
 	rocks_put('DB', aap, noot),
 	rocks_get('DB', aap, Noot),
 	rocks_delete('DB', aap),
- 	assertion(\+ rocks_get('DB', aap, _)).
+ 	assertion(\+ rocks_get('DB', aap, _)),
+        % The following would throw an exception because the code
+        % doesn't distinguish between a db alias that's been closed
+        % and a db alias that's never been opened:
+        %   rocks_close('DB'),      % test double-close
+        %   rocks_close('DB').
+        true.
 
 :- end_tests(alias).
 
