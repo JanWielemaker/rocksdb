@@ -52,7 +52,6 @@
 		 *******************************/
 
 #define DB_DESTROYED	0x0001		/* Was destroyed by user  */
-#define DB_OPEN_ONCE	0x0002		/* open(once) option */
 
 enum blob_type
 { BLOB_ATOM = 0,			/* UTF-8 string as atom */
@@ -1208,7 +1207,6 @@ PREDICATE(rocks_open_, 3)
   merger_t builtin_merger = MERGE_NONE;
   PlAtom alias(PlAtom::null);
   PlRecord merger(PlRecord::null);
-  bool once = false;
   bool read_only = false;
 
   static const PlAtom ATOM_key("key");
@@ -1216,7 +1214,6 @@ PREDICATE(rocks_open_, 3)
   static const PlAtom ATOM_alias("alias");
   static const PlAtom ATOM_merge("merge");
   static const PlAtom ATOM_open("open");
-  static const PlAtom ATOM_once("once");
   static const PlAtom ATOM_mode("mode");
   static const PlAtom ATOM_read_write("read_write");
   static const PlAtom ATOM_read_only("read_only");
@@ -1238,12 +1235,6 @@ PREDICATE(rocks_open_, 3)
 	merger = opt[1].record();
       else if ( ATOM_alias == name )
       { alias = opt[1].as_atom();
-	once = true;
-      } else if ( ATOM_open == name )
-      { if ( ATOM_once == opt[1].as_atom() )
-	  once = true;
-	else
-	  throw PlDomainError("open_option", opt[1]);
       } else if ( ATOM_mode == name )
       { PlAtom a = opt[1].as_atom();
 	if ( ATOM_read_write == a )
@@ -1259,11 +1250,11 @@ PREDICATE(rocks_open_, 3)
       throw PlTypeError("option", opt);
   }
 
-  if ( alias.not_null() && once )
+  if ( alias.not_null() )
   { PlAtom existing = rocks_get_alias_locked(alias);
     if ( existing.not_null() )
     { auto eref = symbol_dbref(existing);
-      if ( eref && (eref->flags&DB_OPEN_ONCE) )
+      if ( eref )
 	return A2.unify_atom(existing);
     }
   }
@@ -1275,8 +1266,6 @@ PREDICATE(rocks_open_, 3)
   ref->type.value     = value_type;
   ref->name           = alias;
   ref->pathname       = PlAtom(fn);
-  if ( once )
-    ref->flags |= DB_OPEN_ONCE;
   ref->pathname.register_ref();
   if ( ref->name.not_null() )
     ref->name.register_ref();
@@ -1291,7 +1280,7 @@ PREDICATE(rocks_open_, 3)
     else
       ok_or_throw_fail(rocksdb::DB::Open(options, fn, &ref->db));
     PlCheckFail(unify_rocks(A2, ref));
-  } catch(...) // TODO - better to do this with a unique_ptr or similar
+  } catch(...) // TODO - remove this by using unique_ptr or similar
   { delete ref;
     throw;
   }

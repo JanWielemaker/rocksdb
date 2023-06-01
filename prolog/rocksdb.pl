@@ -66,7 +66,6 @@
 
 :- predicate_options(rocks_open/3, 3,
 		     [ alias(atom),
-		       open(oneof([once])),
 		       mode(oneof([read_only,read_write])),
 		       key(oneof([atom,string,binary,int32,int64,
 				  float,double,term])),
@@ -212,7 +211,12 @@ See rocks_open/3 for details.
 %!	rocks_open(+Directory, -RocksDB, +Options) is det.
 %
 %	Open a RocksDB database in Directory and unify RocksDB with a
-%	handle to the opened database.  Most of the `DBOptions` in
+%	handle to the opened database. In general, this predicate
+%	throws an exception on failure; if an error occurs in the
+%	rocksdb library, the error term is of the form
+%	rocks_error(Message,_).
+%
+%	Most of the `DBOptions` in
 %	`rocksdb/include/rocksdb/options.h` are supported, in addition
 %	to the following options:
 %
@@ -221,9 +225,6 @@ See rocks_open/3 for details.
 %	  handle.  A named database is not subject to GC and must
 %	  be closed explicitly. When the database is opened,
 %         RocksDB unifies with Name.
-%	  - open(+How)
-%	  If How is `once` and an alias is given, a second open simply
-%	  returns a handle to the already open database.
 %	  - key(+Type)
 %	  - value(+Type)
 %	  Define the type for the key and value. This must be
@@ -270,9 +271,12 @@ See rocks_open/3 for details.
 %	  Define RocksDB value merging.  See rocks_merge/3.
 %	  - mode(+Mode)
 %	  One of `read_write` (default) or `read_only`.  The latter
-%	  uses OpenForReadOnly() to open the database.
+%	  uses OpenForReadOnly() to open the database. It is allowed
+%	  to have multiple `read_only` opens, but only one
+%	  `read_write` (which also precludes having any `read_only`);
+%	  however, it is recommended to only open a databse once.
 %	  - optimize_for_small_db(true) - Use this if your DB is very
-%           small (like under 1GB) and you don't want tog
+%           small (like under 1GB) and you don't want to
 %           spend lots of memory for memtables.
 %         - increase_parallelism(true) - see DBOptions::IncreaseParallelism()
 % @see https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide
