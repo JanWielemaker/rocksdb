@@ -95,7 +95,7 @@ struct dbref
   // All the fields must be "unique" (e.g., no std::string, but PlAtom is OK)
   rocksdb::DB	*db;			/* DB handle */
   PlAtom         pathname;              /* DB's absolute file name (for debugging) */
-  PlAtom         symbol;		/* associated symbol */
+  PlAtom         symbol;		/* associated symbol (used for error terms) */
   PlAtom	 name;			/* alias name (can be PlAtom::null) */
   merger_t	 builtin_merger;	/* C++ Merger */
   PlRecord	 merger;		/* merge option */
@@ -318,24 +318,28 @@ get_rocks(PlTerm t, bool throw_if_closed=true)
 		 *	      UTIL		*
 		 *******************************/
 
-PlException RocksError(const rocksdb::Status &status)
-{ return PlGeneralError(PlCompound("rocks_error",
-				   PlTermv(PlTerm_atom(status.ToString()))));
+PlException RocksError(const rocksdb::Status &status, const dbref *ref = nullptr)
+{ if ( ref && ref->symbol.not_null() )
+    return PlGeneralError(PlCompound("rocks_error",
+                                     PlTermv(PlTerm_atom(status.ToString()),
+                                             PlTerm_atom(ref->symbol))));
+  return PlGeneralError(PlCompound("rocks_error",
+                                   PlTermv(PlTerm_atom(status.ToString()))));
 }
 
 
 static bool
-ok(const rocksdb::Status &status)
+ok(const rocksdb::Status &status, const dbref *ref = nullptr)
 { if ( status.ok() )
     return true;
   if ( status.IsNotFound() )
     return false;
-  throw RocksError(status);
+  throw RocksError(status, ref);
 }
 
 static void
-ok_or_throw_fail(const rocksdb::Status &status)
-{ PlCheckFail(ok(status));
+ok_or_throw_fail(const rocksdb::Status &status, const dbref *ref = nullptr)
+{ PlCheckFail(ok(status, ref));
 }
 
 class PlSlice
@@ -1330,7 +1334,7 @@ PREDICATE(rocks_put, 4)
 
   if ( ref->builtin_merger == MERGE_NONE )
   { auto value = get_slice(A3, ref->type.value);
-    ok_or_throw_fail(ref->db->Put(write_options(A4), key->slice(), value->slice()));
+    ok_or_throw_fail(ref->db->Put(write_options(A4), key->slice(), value->slice()), ref);
   } else
   { PlTerm_tail list(A3);
     PlTerm_var tmp;
@@ -1344,7 +1348,7 @@ PREDICATE(rocks_put, 4)
     if ( ref->builtin_merger == MERGE_SET )
       sort(&value, ref->type.value);
 
-    ok_or_throw_fail(ref->db->Put(write_options(A4), key->slice(), value));
+    ok_or_throw_fail(ref->db->Put(write_options(A4), key->slice(), value), ref);
   }
 
   return true;
@@ -1358,7 +1362,7 @@ PREDICATE(rocks_merge, 4)
   auto key = get_slice(A2,ref->type.key);
   auto value = get_slice(A3, ref->type.value);
 
-  ok_or_throw_fail(ref->db->Merge(write_options(A4), key->slice(), value->slice()));
+  ok_or_throw_fail(ref->db->Merge(write_options(A4), key->slice(), value->slice()), ref);
 
   return true;
 }
@@ -1386,7 +1390,7 @@ PREDICATE(rocks_get, 4)
   std::string value;
   auto key = get_slice(A2, ref->type.key);
 
-  ok_or_throw_fail(ref->db->Get(read_options(A4), key->slice(), &value));
+  ok_or_throw_fail(ref->db->Get(read_options(A4), key->slice(), &value), ref);
   return unify_value(A3, value, ref->builtin_merger, ref->type.value);
 }
 
@@ -1394,7 +1398,7 @@ PREDICATE(rocks_delete, 3)
 { dbref *ref = get_rocks(A1);
   auto key = get_slice(A2, ref->type.key);
 
-  ok_or_throw_fail(ref->db->Delete(write_options(A3), key->slice()));
+  ok_or_throw_fail(ref->db->Delete(write_options(A3), key->slice()), ref);
   return true;
 }
 
@@ -1547,7 +1551,7 @@ PREDICATE(rocks_batch, 3)
   { batch_operation(ref, batch, e);
   }
 
-  ok_or_throw_fail(ref->db->Write(write_options(A3), &batch));
+  ok_or_throw_fail(ref->db->Write(write_options(A3), &batch), ref);
   return true;
 }
 

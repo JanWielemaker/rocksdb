@@ -106,7 +106,7 @@ test(options1, [error(type_error(bool,xxx),_),
 		cleanup(delete_db)]) :-
 	test_db(Dir),
 	rocks_open(Dir, _RocksDB, [error_if_exists(xxx)]).
-test(options2, [error(type_error(option,this_is_not_an_option(123)),_),
+test(options2, [error(type_error(option,this_is_not_an_option(123))),
 		cleanup(delete_db)]) :-
 	test_db(Dir),
 	rocks_open(Dir, _RocksDB, [this_is_not_an_option(123)]).
@@ -114,13 +114,14 @@ test(options3, [error(domain_error(mode_option,not_read_write),_),
 		cleanup(delete_db)]) :-
 	test_db(Dir),
 	rocks_open(Dir, _RocksDB, [mode(not_read_write)]).
-test(options4, [error(rocks_error('Not implemented: Not supported operation in read only mode.'),_),
+% TODO: verify error(rocks-error('...',Blob), the Blob is of type 'rocksdb'
+test(options4, [error(rocks_error('Not implemented: Not supported operation in read only mode.',_)),
 		cleanup(delete_db)]) :-
 	test_db(Dir),
 	rocks_open(Dir, RocksDB0, [key(string), value(string)]),
 	rocks_close(RocksDB0),
 	setup_call_cleanup(
-	    rocks_open(Dir, RocksDB, [mode(read_only)]),
+	    rocks_open(Dir, RocksDB, [mode(read_only), key(string), value(string)]),
 	    (   rocks_put(RocksDB, "one", "àmímé níshíkíhéꜜbì"),
 	        rocks_get(RocksDB, "one", "àmímé níshíkíhéꜜbì")
 	    ),
