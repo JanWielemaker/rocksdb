@@ -214,7 +214,7 @@ See rocks_open/3 for details.
 %	handle to the opened database. In general, this predicate
 %	throws an exception on failure; if an error occurs in the
 %	rocksdb library, the error term is of the form
-%	rocks_error(Message,_).
+%	rocks_error(Message) or rocks_error(Message,Blob).
 %
 %	Most of the `DBOptions` in
 %	`rocksdb/include/rocksdb/options.h` are supported, in addition
