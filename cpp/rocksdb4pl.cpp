@@ -47,6 +47,13 @@
 
 #include <SWI-cpp2.cpp> // TODO: this should possibly be in a separate file
 
+[[nodiscard]] static PlAtom rocks_get_alias(PlAtom name);
+[[nodiscard]] static PlAtom rocks_get_alias_inside_lock(PlAtom name);
+static void rocks_add_alias(PlAtom name, PlAtom symbol);
+static void rocks_add_alias_inside_lock(PlAtom name, PlAtom symbol);
+static void rocks_unalias(PlAtom name);
+static void rocks_unalias_inside_lock(PlAtom name);
+
 		 /*******************************
 		 *	       SYMBOL		*
 		 *******************************/
@@ -62,29 +69,36 @@ enum blob_type
   BLOB_TERM				/* Arbitrary term */
 };
 
+static const char* blob_type_char[] =
+{ "atom",
+  "string",
+  "binary",
+  "int32",
+  "int64",
+  "float32",
+  "float64",
+  "term"
+};
+
 enum merger_t
 { MERGE_NONE = 0,
   MERGE_LIST,
   MERGE_SET
 };
 
-// TODO: rocks_blob.flags has PL_BLOB_UNIQUE, which means that the
-//       contents of a dbref object must be "unique". Therefore, none
-//       of the fields can be something like std::string because the
-//       atom lookup uses byte comparison and std::string contains a
-//       hidden pointer that is different for each instance. However,
-//       the `merger` field is created using PlTerm::record(), which
-//       uses PL_record(), which would result in different values even
-//       if the underlying terms are identical.
-//   ... therefore, we should probably remove the PL_BLOB_UNIQUE and
-//       also should change the blob from being a dbref** to being a
-//       dbref*.
+static const char* merge_t_char[] =
+{ "none",
+  "list",
+  "set"
+};
+
+
 struct dbref
 {
   dbref()
     : db(             nullptr),
       pathname(       PlAtom(PlAtom::null)),
-      symbol(         PlAtom(PlAtom::null)),
+      symbol(         PlAtom(PlAtom::null)), // filled in by acquire_rocks_ref_()
       name(           PlAtom(PlAtom::null)),
       builtin_merger( MERGE_NONE),
       merger(         PlRecord(PlRecord::null)),
@@ -92,7 +106,22 @@ struct dbref
                         .value = BLOB_ATOM})
   { }
 
-  // All the fields must be "unique" (e.g., no std::string, but PlAtom is OK)
+  ~dbref()
+  { // See also predicate rocks_close/1
+    if ( name.not_null() )
+    { rocks_unalias(name);
+      name.unregister_ref();
+    }
+    if ( merger.not_null() )
+      merger.erase();
+    if ( pathname.not_null() )
+      pathname.unregister_ref();
+    if ( db )
+    { (void)db->Close(); // TODO: print warning on failure?
+      delete db;
+    }
+  }
+
   rocksdb::DB	*db;			/* DB handle */
   PlAtom         pathname;              /* DB's absolute file name (for debugging) */
   PlAtom         symbol;		/* associated symbol (used for error terms) */
@@ -106,6 +135,32 @@ struct dbref
 };
 
 
+static void acquire_rocks_ref_(PlAtom eref);
+static bool release_rocks_ref_(PlAtom aref);
+static bool write_rocks_ref_(IOSTREAM *s, PlAtom eref, int flags);
+static bool write_rocks_ref_(IOSTREAM *s, const dbref *reff, int flags);
+static bool save_rocks_(PlAtom aref, IOSTREAM *fd);
+static PlAtom load_rocks_(IOSTREAM *fd);
+
+static void acquire_rocks_ref(atom_t symbol);
+static int release_rocks_ref(atom_t aref);
+static int write_rocks_ref(IOSTREAM *s, atom_t eref, int flags);
+static int save_rocks(atom_t aref, IOSTREAM *fd);
+static atom_t load_rocks(IOSTREAM *fd);
+
+static PL_blob_t rocks_blob =
+{ .magic   = PL_BLOB_MAGIC,
+  .flags   = PL_BLOB_UNIQUE,  // TODO: 0 or PL_BLOB_NOCOPY (see PrologMergeOperator())
+  .name    = "rocksdb",
+  .release = release_rocks_ref,
+  .compare = nullptr,
+  .write   = write_rocks_ref,
+  .acquire = acquire_rocks_ref,
+  .save    = save_rocks,
+  .load    = load_rocks
+};
+
+
 		 /*******************************
 		 *	      ALIAS		*
 		 *******************************/
@@ -115,11 +170,10 @@ std::mutex rocksdb4pl_alias_lock; // global
 //       the key instead of atom_t.
 static std::map<atom_t, PlAtom> alias_entries;
 
-// rocks_get_alias() assumes that rocksdb4pl_alias_lock has been acquired
 [[nodiscard]]
 static PlAtom
-rocks_get_alias(PlAtom name)
-{ auto lookup = alias_entries.find(name.C_);
+rocks_get_alias_inside_lock(PlAtom name)
+{ const auto lookup = alias_entries.find(name.C_);
   if ( lookup == alias_entries.end() )
     return PlAtom(PlAtom::null);
   else
@@ -128,32 +182,37 @@ rocks_get_alias(PlAtom name)
 
 [[nodiscard]]
 static PlAtom
-rocks_get_alias_locked(PlAtom name)
+rocks_get_alias(PlAtom name)
 { std::lock_guard<std::mutex> alias_lock_(rocksdb4pl_alias_lock);
-  return rocks_get_alias(name);
+  return rocks_get_alias_inside_lock(name);
 }
 
 static void
-rocks_alias(PlAtom name, PlAtom symbol)
-{ std::lock_guard<std::mutex> alias_lock_(rocksdb4pl_alias_lock);
-  if ( rocks_get_alias(name).is_null() )
+rocks_add_alias_inside_lock(PlAtom name, PlAtom symbol)
+{ const auto lookup = rocks_get_alias_inside_lock(name);
+  if ( lookup.is_null() )
   { alias_entries.insert(std::make_pair(name.C_, symbol));
     name.register_ref();
     symbol.register_ref();
-  } else
+  } else if ( lookup != symbol )
   { throw PlPermissionError("alias", "rocksdb", PlTerm_atom(name));
   }
 }
 
 static void
-rocks_unalias(PlAtom name)
+rocks_add_alias(PlAtom name, PlAtom symbol)
 { std::lock_guard<std::mutex> alias_lock_(rocksdb4pl_alias_lock);
-  auto lookup = alias_entries.find(name.C_);
+  rocks_add_alias_inside_lock(name, symbol);
+}
+
+static void
+rocks_unalias_inside_lock(PlAtom name)
+{ auto lookup = alias_entries.find(name.C_);
   if ( lookup == alias_entries.end() )
     return;
   // TODO: As an alternative to removing the entry, leave it in place
-  //       (with db==nullptr showing that it's been closed; or
-  //       with the value as PlAtom::null), so that rocks_close/1 can
+  //       (with db==nullptr showing that it's been closed; or with
+  //       the value as PlAtom::null), so that rocks_close/1 can
   //       distinguish an alias lookup that should throw a
   //       PlExistenceError because it's never been opened.
   name.unregister_ref();
@@ -161,27 +220,57 @@ rocks_unalias(PlAtom name)
   alias_entries.erase(lookup);
 }
 
+static void
+rocks_unalias(PlAtom name)
+{ std::lock_guard<std::mutex> alias_lock_(rocksdb4pl_alias_lock);
+  rocks_unalias_inside_lock(name);
+}
+
 
 		 /*******************************
 		 *	 SYMBOL REFERENCES	*
 		 *******************************/
 
+static void
+acquire_rocks_ref_(PlAtom eref)
+{ auto ref = *static_cast<dbref **>(eref.blob_data(nullptr, nullptr));
+  ref->symbol = eref;
+}
+
+static void
+acquire_rocks_ref(atom_t symbol)
+{ acquire_rocks_ref_(PlAtom(symbol));
+}
+
+
 [[nodiscard]]
 static bool
-write_rocks_ref_(IOSTREAM *s, PlAtom eref, int flags)
-{ auto ref = *static_cast<dbref **>(eref.blob_data(nullptr, nullptr));
-
-  Sfprintf(s, "<rocksdb>(%p", ref);
+write_rocks_ref_(IOSTREAM *s, const dbref *ref, int flags)
+{ Sfprintf(s, "<rocksdb>(%p", ref);
   if ( ref->pathname.not_null() )
     Sfprintf(s, ",path=%Ws", ref->pathname.as_wstring().c_str());
   if ( ref->name.not_null() )
     Sfprintf(s, ",alias=%Ws", ref->name.as_wstring().c_str());
+  if (ref->builtin_merger != MERGE_NONE)
+    Sfprintf(s, ",builtin_merger=%s", merge_t_char[ref->builtin_merger]);
+  if ( ref->merger.not_null() )
+  { auto m(ref->merger.term());
+    if ( m.not_null() )
+      Sfprintf(s, ",merger=%Ws", m.as_wstring().c_str());
+  }
   if ( !ref->db )
     Sfprintf(s, ",CLOSED");
-  Sfprintf(s, "%s", ")");
+  Sfprintf(s, ",key=%s,value=%s)", blob_type_char[ref->type.key], blob_type_char[ref->type.value]);
   if ( flags&PL_WRT_NEWLINE )
     Sfprintf(s, "\n");
   return true;
+}
+
+[[nodiscard]]
+static bool
+write_rocks_ref_(IOSTREAM *s, PlAtom eref, int flags)
+{ const auto ref = *static_cast<dbref **>(eref.blob_data(nullptr, nullptr));
+  return write_rocks_ref_(s, ref, flags);
 }
 
 [[nodiscard]]
@@ -200,17 +289,7 @@ static bool
 release_rocks_ref_(PlAtom aref)
 { auto ref = *static_cast<dbref **>(aref.blob_data(nullptr, nullptr));
 
-  // TODO: remove this assertion?
-  assert(ref->name.is_null());
-
-  { auto db = ref->db;
-    if ( db )
-    { ref->db = nullptr;
-      delete db;
-    }
-  }
-  ref->merger.erase();
-  delete ref; // TODO: delete **ref is done by system
+  delete ref; // TODO: delete aref.blob_data() is done by Prolog
 
   return true;
 }
@@ -224,7 +303,7 @@ release_rocks_ref(atom_t aref)
 [[nodiscard]]
 static bool
 save_rocks_(PlAtom aref, IOSTREAM *fd)
-{ auto ref = *static_cast<dbref **>(aref.blob_data(nullptr, nullptr));
+{ const auto ref = *static_cast<dbref **>(aref.blob_data(nullptr, nullptr));
   (void)fd;
 
   return PL_warning("Cannot save reference to <rocksdb>(%p)", ref);
@@ -241,42 +320,18 @@ static PlAtom
 load_rocks_(IOSTREAM *fd)
 { (void)fd;
 
-  return PlAtom("<saved-rocksdb-ref>");
+  (void)PL_warning("Cannot load reference to <rocksdb>");
+  PL_fatal_error("Cannot load reference to <rocksdb>");
+  return PlAtom(PlAtom::null);
 }
 
 static atom_t
 load_rocks(IOSTREAM *fd)
-{ return load_rocks_(fd).C_;
-}
-
-static PL_blob_t rocks_blob =
-{ .magic   = PL_BLOB_MAGIC,
-  .flags   = PL_BLOB_UNIQUE,
-  .name    = "rocksdb",
-  .release = release_rocks_ref,
-  .compare = nullptr,
-  .write   = write_rocks_ref,
-  .acquire = nullptr,
-  .save    = save_rocks, // TODO: implement
-  .load    = load_rocks  // TODO: implement
-};
-
-
-[[nodiscard]]
-static bool
-unify_rocks(PlTerm t, dbref *ref)
-{ if ( ref->name.not_null() )
-  { if ( ref->symbol.is_null() )
-    { PlTerm_var tmp;
-      PlCheckFail(tmp.unify_blob(&ref, sizeof ref, &rocks_blob));
-      ref->symbol = tmp.as_atom();
-      rocks_alias(ref->name, ref->symbol);
-    }
-    return t.unify_atom(ref->name);
-  } else if ( ref->symbol.not_null() )
-  { return t.unify_atom(ref->symbol);
-  } else return ( t.unify_blob(&ref, sizeof ref, &rocks_blob) &&
-		  t.get_atom(&ref->symbol) );
+{ const auto a = load_rocks_(fd);
+  if ( a.not_null() )
+    return a.C_;
+  PL_fatal_error("Cannot load reference to <rocksdb>");
+  return 0;
 }
 
 
@@ -285,7 +340,7 @@ static dbref *
 symbol_dbref(PlAtom symbol)
 { size_t len;
   PL_blob_t *type;
-  auto data = static_cast<dbref **>(symbol.blob_data(&len, &type));
+  const auto data = static_cast<dbref **>(symbol.blob_data(&len, &type));
 
   if ( data && type == &rocks_blob )
     { return *data;
@@ -302,7 +357,7 @@ get_rocks(PlTerm t, bool throw_if_closed=true)
 
   auto ref = symbol_dbref(a);
   if ( ! ref )
-  { a = rocks_get_alias_locked(a);
+  { a = rocks_get_alias(a);
     if ( a.not_null() )
       ref = symbol_dbref(a);
   }
@@ -318,13 +373,14 @@ get_rocks(PlTerm t, bool throw_if_closed=true)
 		 *	      UTIL		*
 		 *******************************/
 
-PlException RocksError(const rocksdb::Status &status, const dbref *ref = nullptr)
+static PlException
+RocksError(const rocksdb::Status &status, const dbref *ref)
 { if ( ref && ref->symbol.not_null() )
     return PlGeneralError(PlCompound("rocks_error",
-                                     PlTermv(PlTerm_atom(status.ToString()),
-                                             PlTerm_atom(ref->symbol))));
+				     PlTermv(PlTerm_atom(status.ToString()),
+					     PlTerm_atom(ref->symbol))));
   return PlGeneralError(PlCompound("rocks_error",
-                                   PlTermv(PlTerm_atom(status.ToString()))));
+				   PlTermv(PlTerm_atom(status.ToString()))));
 }
 
 
@@ -341,6 +397,7 @@ static void
 ok_or_throw_fail(const rocksdb::Status &status, const dbref *ref = nullptr)
 { PlCheckFail(ok(status, ref));
 }
+
 
 class PlSlice
 {
@@ -407,23 +464,23 @@ get_slice(PlTerm t, blob_type type)
     case BLOB_BINARY:
       return std::make_unique<PlSliceStr>(t.get_nchars(CVT_IN|CVT_EXCEPTION));
     case BLOB_INT32:
-      { int32_t v;
-        t.integer(&v);
-        return std::make_unique<PlSliceNumber<int32_t>>(v);
-      }
+    { int32_t v;
+      t.integer(&v);
+      return std::make_unique<PlSliceNumber<int32_t>>(v);
+    }
     case BLOB_INT64:
-      { int64_t v;
-        t.integer(&v);
-        return std::make_unique<PlSliceNumber<int64_t>>(v);
-      }
+    { int64_t v;
+      t.integer(&v);
+      return std::make_unique<PlSliceNumber<int64_t>>(v);
+    }
     case BLOB_FLOAT32:
       return std::make_unique<PlSliceNumber<float>>(static_cast<float>(t.as_float()));
     case BLOB_FLOAT64:
       return std::make_unique<PlSliceNumber<double>>(t.as_double());
     case BLOB_TERM:
-      { PlRecordExternalCopy e(t); // declared here so that it stays in scope for return
-        return std::make_unique<PlSliceStr>(e.data());
-      }
+    { PlRecordExternalCopy e(t); // declared here so that it stays in scope for return
+      return std::make_unique<PlSliceStr>(e.data());
+    }
     default:
       assert(0);
   }
@@ -615,7 +672,7 @@ call_merger(const dbref *ref, PlTermv av, std::string* new_value,
   try
   { PlQuery q(pred_call6, av);
     if ( q.next_solution() )
-    { auto answer = get_slice(av[5], ref->type.value);
+    { const auto answer = get_slice(av[5], ref->type.value);
       new_value->assign(answer->data(), answer->size());
       return true;
     } else
@@ -624,7 +681,7 @@ call_merger(const dbref *ref, PlTermv av, std::string* new_value,
     }
   } catch(PlException &ex)
   { Log(logger, "%s", ex.as_string(PlEncoding::UTF8).c_str());
-    return false;
+    throw;
   }
 }
 
@@ -644,7 +701,7 @@ public:
 	    const std::deque<std::string>& operand_list,
 	    std::string* new_value,
 	    rocksdb::Logger* logger) const override
-  { engine e;
+  { engine e_ctxt;
     PlTermv av(6);
     PlTerm_tail list(av[4]);
     PlTerm_var tmp;
@@ -653,8 +710,8 @@ public:
     for (const auto& value : operand_list)
     { Plx_put_variable(tmp.C_);
       if ( !unify(tmp, value, ref->type.value) ||
-           !list.append(tmp) )
-        return false;
+	   !list.append(tmp) )
+	return false;
     }
     if ( !list.close() )
       return false;
@@ -674,7 +731,7 @@ public:
 	       const rocksdb::Slice& right_operand,
 	       std::string* new_value,
 	       rocksdb::Logger* logger) const override
-  { engine e;
+  { engine e_ctxt;
     PlTermv av(6);
     static const PlAtom ATOM_partial("partial");
 
@@ -698,8 +755,8 @@ template<typename Number_t>
 [[nodiscard]]
 static int
 cmp_number(const void *v1, const void *v2)
-{ auto i1 = static_cast<const Number_t *>(v1);
-  auto i2 = static_cast<const Number_t *>(v2);
+{ const auto i1 = static_cast<const Number_t *>(v1);
+  const auto i2 = static_cast<const Number_t *>(v2);
 
   return *i1 > *i2 ? 1 : *i1 < *i2 ? -1 : 0;
 }
@@ -707,13 +764,13 @@ cmp_number(const void *v1, const void *v2)
 template<typename Number_t>
 static void
 sort_numbers(std::string *str)
-{ auto s = str->data();
-  auto len = str->length();
+{ const auto s = str->data();
+  const auto len = str->length();
   if ( len == 0 )
     return;
   auto ip = reinterpret_cast<Number_t *>(s);
   auto op = ip+1;
-  auto ep = reinterpret_cast<Number_t *>(s+len);
+  const auto ep = reinterpret_cast<Number_t *>(s+len);
   Number_t cv;
 
   qsort(s, len / sizeof ip, sizeof ip, cmp_number<Number_t>);
@@ -1236,7 +1293,7 @@ PREDICATE(rocks_open_, 3)
       else if ( ATOM_alias == name )
       { alias = opt[1].as_atom();
       } else if ( ATOM_mode == name )
-      { PlAtom a = opt[1].as_atom();
+      { const auto a = opt[1].as_atom();
 	if ( ATOM_read_write == a )
 	  read_only = false;
 	else if ( ATOM_read_only == a )
@@ -1251,60 +1308,72 @@ PREDICATE(rocks_open_, 3)
   }
 
   if ( alias.not_null() )
-  { PlAtom existing = rocks_get_alias_locked(alias);
+  { const auto existing = rocks_get_alias(alias);
     if ( existing.not_null() )
-    { auto eref = symbol_dbref(existing);
-      if ( eref )
-	return A2.unify_atom(existing);
-    }
+      throw PlPermissionError("alias", "rocksdb", PlTerm_atom(alias));
   }
 
-  auto ref = new dbref();
+  auto ref = std::make_unique<dbref>();
   ref->merger         = merger;
   ref->builtin_merger = builtin_merger;
   ref->type.key       = key_type;
   ref->type.value     = value_type;
-  ref->name           = alias;
   ref->pathname       = PlAtom(fn);
   ref->pathname.register_ref();
+  ref->name           = alias;
   if ( ref->name.not_null() )
     ref->name.register_ref();
 
-  try
-  { if ( ref->merger.not_null() )
-      options.merge_operator.reset(new PrologMergeOperator(ref));
-    else if ( builtin_merger != MERGE_NONE )
-      options.merge_operator.reset(new ListMergeOperator(ref));
-    if ( read_only )
-      ok_or_throw_fail(rocksdb::DB::OpenForReadOnly(options, fn, &ref->db));
-    else
-      ok_or_throw_fail(rocksdb::DB::Open(options, fn, &ref->db));
-    PlCheckFail(unify_rocks(A2, ref));
-  } catch(...) // TODO - remove this by using unique_ptr or similar
-  { delete ref;
-    throw;
+  if ( ref->merger.not_null() )
+    options.merge_operator.reset(new PrologMergeOperator(ref.get()));
+  else if ( builtin_merger != MERGE_NONE )
+    options.merge_operator.reset(new ListMergeOperator(ref.get()));
+  ok_or_throw_fail(read_only
+		   ? rocksdb::DB::OpenForReadOnly(options, fn, &ref->db)
+		   : rocksdb::DB::Open(options, fn, &ref->db));
+
+  if ( ref->name.is_null() )
+    { PlCheckFail(A2.unify_blob(&ref, sizeof ref, &rocks_blob));
+  } else
+  { PlTerm_var tmp;
+    PlCheckFail(tmp.unify_blob(&ref, sizeof ref, &rocks_blob));
+    rocks_add_alias(ref->name, tmp.as_atom());
+    PlCheckFail(A2.unify_atom(ref->name));
   }
+
+  (void)ref.release(); // ref now owned by Prolog
   return true;
 }
 
 
 PREDICATE(rocks_close, 1)
-{ dbref *ref = get_rocks(A1, false);
+{ const auto ref = get_rocks(A1, false);
   if ( !ref )
     return true;
-  auto db = ref->db;
 
-  ref->db = nullptr;
+  // The following code is a subset of dbref::~dbref(), and also can
+  // throw a Prolog error if ref->db->Close() fails.
+
   if ( ref->name.not_null() )
   { rocks_unalias(ref->name);
-    ref->name.reset();
+    // ref->name is needed by write_rocks_ref_(), so don't: ref->name.unregister_ref()
   }
-  ref->pathname.unregister_ref();
-  if ( ref->name.not_null() )
-    ref->name.unregister_ref();
 
-  delete db;
+  { auto db = ref->db;
+    ref->db = nullptr;
+    if ( db )
+      ok_or_throw_fail(db->Close());
+  }
+
   return true;
+}
+
+
+PREDICATE(rocks_alias_lookup, 2)
+{ PlAtom a(rocks_get_alias(A1.as_atom()));
+  if ( a.not_null() )
+    return A2.unify_atom(a);
+  return false;
 }
 
 
@@ -1329,11 +1398,11 @@ write_options(PlTerm options_term)
 
 
 PREDICATE(rocks_put, 4)
-{ dbref *ref = get_rocks(A1);
-  auto key = get_slice(A2, ref->type.key);
+{ const auto ref = get_rocks(A1);
+  const auto key = get_slice(A2, ref->type.key);
 
   if ( ref->builtin_merger == MERGE_NONE )
-  { auto value = get_slice(A3, ref->type.value);
+  { const auto value = get_slice(A3, ref->type.value);
     ok_or_throw_fail(ref->db->Put(write_options(A4), key->slice(), value->slice()), ref);
   } else
   { PlTerm_tail list(A3);
@@ -1341,7 +1410,7 @@ PREDICATE(rocks_put, 4)
     std::string value;
 
     while ( list.next(tmp) )
-    { auto s = get_slice(tmp, ref->type.value);
+    { const auto s = get_slice(tmp, ref->type.value);
       value += s->ToString();
     }
 
@@ -1355,12 +1424,12 @@ PREDICATE(rocks_put, 4)
 }
 
 PREDICATE(rocks_merge, 4)
-{ dbref *ref = get_rocks(A1);
+{ const auto ref = get_rocks(A1);
   if ( ref->merger.is_null() && ref->builtin_merger == MERGE_NONE )
     throw PlPermissionError("merge", "rocksdb", A1);
 
-  auto key = get_slice(A2,ref->type.key);
-  auto value = get_slice(A3, ref->type.value);
+  const auto key = get_slice(A2,ref->type.key);
+  const auto value = get_slice(A3, ref->type.value);
 
   ok_or_throw_fail(ref->db->Merge(write_options(A4), key->slice(), value->slice()), ref);
 
@@ -1386,17 +1455,17 @@ read_options(PlTerm options_term)
 }
 
 PREDICATE(rocks_get, 4)
-{ dbref *ref = get_rocks(A1);
+{ const auto ref = get_rocks(A1);
   std::string value;
-  auto key = get_slice(A2, ref->type.key);
+  const auto key = get_slice(A2, ref->type.key);
 
   ok_or_throw_fail(ref->db->Get(read_options(A4), key->slice(), &value), ref);
   return unify_value(A3, value, ref->builtin_merger, ref->type.value);
 }
 
 PREDICATE(rocks_delete, 3)
-{ dbref *ref = get_rocks(A1);
-  auto key = get_slice(A2, ref->type.key);
+{ const auto ref = get_rocks(A1);
+  const auto key = get_slice(A2, ref->type.key);
 
   ok_or_throw_fail(ref->db->Delete(write_options(A3), key->slice()), ref);
   return true;
@@ -1422,32 +1491,31 @@ struct enum_state
 
 [[nodiscard]]
 static bool
-unify_enum_key(PlTerm t, const enum_state *state)
-{ if ( state->type == ENUM_PREFIX )
-  { rocksdb::Slice k(state->it->key());
+unify_enum_key(PlTerm t, const enum_state& state)
+{ if ( state.type == ENUM_PREFIX )
+  { rocksdb::Slice k(state.it->key());
 
-    // TODO: use std::string's compare
-    if ( k.size_ >= state->prefix.length() &&
-	 memcmp(k.data_, state->prefix.data(), state->prefix.length()) == 0 )
-    { k.data_ += state->prefix.length();
-      k.size_ -= state->prefix.length();
+    if ( k.size_ >= state.prefix.length() &&
+	 memcmp(k.data_, state.prefix.data(), state.prefix.length()) == 0 )
+    { k.data_ += state.prefix.length();
+      k.size_ -= state.prefix.length();
 
-      return unify(t, k, state->ref->type.key);
+      return unify(t, k, state.ref->type.key);
     } else
       return false;
   } else
-  { return unify(t, state->it->key(), state->ref->type.key);
+  { return unify(t, state.it->key(), state.ref->type.key);
   }
 }
 
 
 [[nodiscard]]
 static bool
-enum_key_prefix(const enum_state *state)
-{ if ( state->type == ENUM_PREFIX )
-  { rocksdb::Slice k(state->it->key());
-    return ( k.size_ >= state->prefix.length() &&
-	     memcmp(k.data_, state->prefix.data(), state->prefix.length()) == 0 );
+enum_key_prefix(const enum_state& state)
+{ if ( state.type == ENUM_PREFIX )
+  { rocksdb::Slice k(state.it->key());
+    return ( k.size_ >= state.prefix.length() &&
+	     memcmp(k.data_, state.prefix.data(), state.prefix.length()) == 0 );
   } else
     return true;
 }
@@ -1467,10 +1535,10 @@ rocks_enum(PlTermv PL_av, int ac, enum_type type, PlControl handle, rocksdb::Rea
 	       state->ref->type.key == BLOB_BINARY) )
 	  throw PlPermissionError("enum", "rocksdb", A1);
 
-	std::string prefix = A4.get_nchars(REP_UTF8|CVT_IN|CVT_EXCEPTION);
+	const std::string prefix = A4.get_nchars(REP_UTF8|CVT_IN|CVT_EXCEPTION);
 
 	if ( type == ENUM_PREFIX )
-        { state->prefix = prefix;
+	{ state->prefix = prefix;
 	}
 	state->it.reset(state->ref->db->NewIterator(options));
 	state->it->Seek(prefix);
@@ -1483,13 +1551,12 @@ rocks_enum(PlTermv PL_av, int ac, enum_type type, PlControl handle, rocksdb::Rea
     case PL_REDO:
     { PlFrame fr;
       for ( ; state->it->Valid(); state->it->Next() )
-      { if ( unify_enum_key(A2, state.get()) &&
+      { if ( unify_enum_key(A2, *state) &&
 	     unify_value(A3, state->it->value(),
 			 state->ref->builtin_merger, state->ref->type.value) )
 	{ state->it->Next();
-	  if ( state->it->Valid() && enum_key_prefix(state.get()) )
-          { state.keep();
-            PL_retry_address(state.get());
+	  if ( state->it->Valid() && enum_key_prefix(*state) )
+	  { PL_retry_address(state.keep());
 	  } else
 	  { return true;
 	  }
@@ -1507,17 +1574,21 @@ rocks_enum(PlTermv PL_av, int ac, enum_type type, PlControl handle, rocksdb::Rea
   return false;
 }
 
+
 PREDICATE_NONDET(rocks_enum, 4)
 { return rocks_enum(PL_av, 3, ENUM_ALL, handle, read_options(A4));
 }
+
 
 PREDICATE_NONDET(rocks_enum_from, 5)
 { return rocks_enum(PL_av, 4, ENUM_FROM, handle, read_options(A5));
 }
 
+
 PREDICATE_NONDET(rocks_enum_prefix, 5)
 { return rocks_enum(PL_av, 4, ENUM_PREFIX, handle, read_options(A5));
 }
+
 
 static void
 batch_operation(const dbref *ref, rocksdb::WriteBatch &batch, PlTerm e)
@@ -1529,11 +1600,11 @@ batch_operation(const dbref *ref, rocksdb::WriteBatch &batch, PlTerm e)
 
   PlCheckFail(e.name_arity(&name, &arity));
   if ( ATOM_delete == name && arity == 1 )
-  { auto key = get_slice(e[1], ref->type.key);
+  { const auto key = get_slice(e[1], ref->type.key);
     batch.Delete(key->slice());
   } else if ( ATOM_put == name && arity == 2 )
-  { auto key = get_slice(e[1], ref->type.key);
-    auto value = get_slice(e[2], ref->type.value);
+  { const auto key = get_slice(e[1], ref->type.key);
+    const auto value = get_slice(e[2], ref->type.value);
     batch.Put(key->slice(), value->slice());
   } else
   { throw PlDomainError("rocks_batch_operation", e);
@@ -1542,7 +1613,7 @@ batch_operation(const dbref *ref, rocksdb::WriteBatch &batch, PlTerm e)
 
 
 PREDICATE(rocks_batch, 3)
-{ dbref *ref = get_rocks(A1);
+{ const auto ref = get_rocks(A1);
   rocksdb::WriteBatch batch;
   PlTerm_tail tail(A2);
   PlTerm_var e;
@@ -1556,12 +1627,12 @@ PREDICATE(rocks_batch, 3)
 }
 
 
-static PlAtom ATOM_estimate_num_keys("estimate_num_keys");
-
 PREDICATE(rocks_property, 3)
-{ dbref *ref = get_rocks(A1);
+{ const auto ref = get_rocks(A1);
+  static PlAtom ATOM_estimate_num_keys("estimate_num_keys");
 
-  PlAtom prop = A2.as_atom();
+  const auto prop = A2.as_atom();
+
   if ( ATOM_estimate_num_keys == prop )
   { uint64_t value;
 

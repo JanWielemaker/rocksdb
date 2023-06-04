@@ -372,6 +372,20 @@ test(basic, [Noot == noot,
         %   rocks_close('DB').
         true.
 
+test(dup, [error(permission_error(alias,rocksdb,'DB')),
+           setup(setup_db(Dir, DB, [alias('DB')])),
+           cleanup((cleanup_db(Dir, DB),
+                    cleanup_db(Dir2, DB2)))]) :-
+    test_db2(Dir2),
+    rocks_open(Dir2, DB2, [alias('DB')]).
+% As 1st dup test, but the rocks_close clears the alias entry:
+test(dup, [setup(setup_db(Dir, DB, [alias('DB')])),
+           cleanup((cleanup_db(Dir, DB),
+                    cleanup_db(Dir2, DB2)))]) :-
+    test_db2(Dir2),
+    rocks_close(DB),
+    rocks_open(Dir2, DB2, [alias('DB')]).
+
 :- end_tests(alias).
 
 		 /*******************************
@@ -379,6 +393,7 @@ test(basic, [Noot == noot,
 		 *******************************/
 
 test_db('/tmp/test_rocksdb').
+test_db2('/tmp/test_rocksdb2').
 
 delete_db :-
     test_db(DB),
@@ -401,5 +416,7 @@ setup_db(Dir, RocksDB, Options) :-
 % is an error in the test case and the database isn't closed, it will
 % cause spurious errors from all the subsequent tests.
 cleanup_db(Dir, RocksDB) :-
-    catch(ignore(rocks_close(RocksDB)), _, true),
-    delete_db(Dir).
+    catch((ignore(rocks_close(RocksDB)),
+           delete_db(Dir)),
+          _, true).
+
