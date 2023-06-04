@@ -36,6 +36,7 @@
 :- module(rocksdb,
 	  [ rocks_open/3,		% +Directory, -RocksDB, +Options
 	    rocks_close/1,		% +RocksDB
+	    rocks_alias_lookup/2,	% +Name, -RocksDB
 
 	    rocks_put/3,		% +RocksDB, +Key, +Value
 	    rocks_put/4,		% +RocksDB, +Key, +Value, +Options
@@ -222,13 +223,16 @@ See rocks_open/3 for details.
 %
 %	  - alias(+Name)
 %	  Give the database a name instead of using an anonymous
-%	  handle.  A named database is not subject to GC and must
-%	  be closed explicitly. When the database is opened,
-%         RocksDB unifies with Name.
+%	  handle.  A named database is not subject to GC and must be
+%	  closed explicitly. When the database is opened, RocksDB
+%	  unifies with Name (the underlying handle can obtained using
+%	  rocks_alias_lookup2).
+
 %	  - key(+Type)
 %	  - value(+Type)
-%	  Define the type for the key and value. This must be
-%	  consistent over multiple invocations.  Defined types are:
+%	  Define the type for the key and value. These must be
+%	  consistent over multiple invocations. Default is `atom`.
+%	  Defined types are:
 %	    - atom
 %	      Accepts an atom or string.  Unifies the result with an
 %	      atom.  Data is stored as a UTF-8 string in RocksDB.
@@ -317,6 +321,23 @@ is_meta(merge).
 %	succeeds; if it's an alias name that's already been closed, an
 %	existence error is raised (this behavior may change in
 %	future).
+
+
+%!	rocks_alias_lookup(+Name, -RocksDB) is semidet.
+%
+%	Look up an alias Name (as specified in rocks_open/3 `alias`
+%	option and unify RocksDb with the underlying handle; fails if
+%	there is no open file with the alias Name.
+%
+%	This predicate has two uses:
+%	- The other predicates have slightly faster performance when the
+%	  RocksDB handle is used instead of the Name.
+%	- Some extra debugging information is available when the blob is printed.
+%
+%	Note that `rocks_open(...,RocksDB,[alias(Name)])` unifies
+%	RocksDB with Name; if `alias(Name)` is not specified, RocksDB
+%	is unified with the underlying handle.
+
 
 %!	rocks_put(+RocksDB, +Key, +Value) is det.
 %!      rocks_put(+RocksDB, +Key, +Value, Options) is det.
