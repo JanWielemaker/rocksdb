@@ -918,76 +918,72 @@ get_blob_type(PlTerm t, blob_type *key_type, merger_t *m)
 }
 
 
-typedef void (*ReadOptdefAction)(rocksdb::ReadOptions *options, PlTerm t);
-
-struct ReadOptdef
-{ const char *name;
-  ReadOptdefAction action;
-  PlAtom atom; // Initially PlAtom::null; filled in as-needed by lookup
-};
-
-#define RD_ODEF [](rocksdb::ReadOptions *options, PlTerm arg)
-
-// TODO: move read_optdefs into read_options(), remove the PlAtom(PlAtom::null),
-//       replacing ReadOptdef::name with PlAtom ... C++ will initialize the
-//       "static" const structure on first use.
-static ReadOptdef read_optdefs[] =
-{ // "snapshot" const Snapshot*
-  // "iterate_lower_bound" const rocksdb::Slice*
-  // "iterate_upper_bound" const rocksdb::Slice*
-  {         "readahead_size",                       RD_ODEF {
-    options->readahead_size                       = arg.as_size_t(); }, PlAtom(PlAtom::null) },
-  {         "max_skippable_internal_keys",          RD_ODEF {
-    options->max_skippable_internal_keys          = arg.as_uint64_t(); }, PlAtom(PlAtom::null) },
-  // "read_tier" ReadTier
-  {         "verify_checksums",                     RD_ODEF {
-    options->verify_checksums                     = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "fill_cache",                           RD_ODEF {
-    options->fill_cache                           = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "tailing",                              RD_ODEF {
-    options->tailing                              = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  // "managed" - not used any more
-  {         "total_order_seek",                     RD_ODEF {
-    options->total_order_seek                     = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "auto_prefix_mode",                     RD_ODEF {
-    options->auto_prefix_mode                     = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "prefix_same_as_start",                 RD_ODEF {
-    options->prefix_same_as_start                 = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "pin_data",                             RD_ODEF {
-    options->pin_data                             = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "background_purge_on_iterator_cleanup", RD_ODEF {
-    options->background_purge_on_iterator_cleanup = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "ignore_range_deletions",               RD_ODEF {
-    options->ignore_range_deletions               = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  // "table_filter" std::function<bool(const TableProperties&)>
-  // TODO: "iter_start_seqnum" removed from rocksdb/include/options.h?
-  // {         "iter_start_seqnum",                    RD_ODEF {
-  //   options->iter_start_seqnum                    = static_cast<SequenceNumber>(arg); }, PlAtom(PlAtom::null) },
-  //         "timestamp" rocksdb::Slice*
-  // "iter_start_ts" rocksdb::Slice*
-  {
-	     "deadline",                            RD_ODEF {
-      options->deadline                             = static_cast<std::chrono::microseconds>(arg.as_int64_t()); }, PlAtom(PlAtom::null) },
-  {         "io_timeout",                           RD_ODEF {
-      options->io_timeout                           = static_cast<std::chrono::microseconds>(arg.as_int64_t()); }, PlAtom(PlAtom::null) },
-  {         "value_size_soft_limit",                RD_ODEF {
-      options->value_size_soft_limit                = arg.as_uint64_t(); }, PlAtom(PlAtom::null) },
-  { nullptr, nullptr, PlAtom(PlAtom::null) }
-};
-
-
-// TODO: consolidate lookup_read_optdef_and_apply,
-//       lookup_write_optdef_and_apply, lookup_optdef_and_apply;
-//       possibly using STL map (although that doesn't support
-//       lazy filling in of the atoms in the lookup table)
 static void
 lookup_read_optdef_and_apply(rocksdb::ReadOptions *options,
-			     ReadOptdef opt_defs[],
 			     PlAtom name, PlTerm opt)
-{ for ( auto def=opt_defs; def->name; def++ )
-  { if ( def->atom.is_null() ) // lazily fill in atoms in lookup table
-      def->atom = PlAtom(def->name);
-    if ( def->atom == name )
+{
+  typedef void (*ReadOptdefAction)(rocksdb::ReadOptions *options, PlTerm t);
+
+  struct ReadOptdef
+  { const PlAtom name;
+    const ReadOptdefAction action;
+
+    ReadOptdef(const char *name_, ReadOptdefAction action_)
+      : name(name_), action(action_) { }
+    ReadOptdef(PlAtom atom_, ReadOptdefAction action_)
+      : name(atom_), action(action_) { }
+  };
+
+  #define RD_ODEF [](rocksdb::ReadOptions *o, PlTerm arg)
+
+  static const ReadOptdef read_optdefs[] =
+    {       // "snapshot" const Snapshot*
+            // "iterate_lower_bound" const rocksdb::Slice*
+            // "iterate_upper_bound" const rocksdb::Slice*
+      ReadOptdef("readahead_size",                       RD_ODEF {
+               o->readahead_size                       = arg.as_size_t(); } ),
+      ReadOptdef("max_skippable_internal_keys",          RD_ODEF {
+               o->max_skippable_internal_keys          = arg.as_uint64_t(); } ),
+              // "read_tier" ReadTier
+      ReadOptdef("verify_checksums",                     RD_ODEF {
+               o->verify_checksums                     = arg.as_bool(); } ),
+      ReadOptdef("fill_cache",                           RD_ODEF {
+               o->fill_cache                           = arg.as_bool(); } ),
+      ReadOptdef("tailing",                              RD_ODEF {
+               o->tailing                              = arg.as_bool(); } ),
+              // "managed" - not used any more
+      ReadOptdef("total_order_seek",                     RD_ODEF {
+               o->total_order_seek                     = arg.as_bool(); } ),
+      ReadOptdef("auto_prefix_mode",                     RD_ODEF {
+               o->auto_prefix_mode                     = arg.as_bool(); } ),
+      ReadOptdef("prefix_same_as_start",                 RD_ODEF {
+               o->prefix_same_as_start                 = arg.as_bool(); } ),
+      ReadOptdef("pin_data",                             RD_ODEF {
+               o->pin_data                             = arg.as_bool(); } ),
+      ReadOptdef("background_purge_on_iterator_cleanup", RD_ODEF {
+               o->background_purge_on_iterator_cleanup = arg.as_bool(); } ),
+      ReadOptdef("ignore_range_deletions",               RD_ODEF {
+               o->ignore_range_deletions               = arg.as_bool(); } ),
+              // "table_filter" std::function<bool(const TableProperties&)>
+        // TODO: "iter_start_seqnum" removed from rocksdb/include/options.h?
+        // {         "iter_start_seqnum",                    RD_ODEF {
+        //         o->iter_start_seqnum                    = static_cast<SequenceNumber>(arg); } },
+        //       "timestamp" rocksdb::Slice*
+        //       "iter_start_ts" rocksdb::Slice*
+      ReadOptdef("deadline",                             RD_ODEF {
+               o->deadline                             = static_cast<std::chrono::microseconds>(arg.as_int64_t()); } ),
+      ReadOptdef("io_timeout",                           RD_ODEF {
+               o->io_timeout                           = static_cast<std::chrono::microseconds>(arg.as_int64_t()); } ),
+      ReadOptdef("value_size_soft_limit",                RD_ODEF {
+               o->value_size_soft_limit                = arg.as_uint64_t(); } ),
+
+      ReadOptdef(PlAtom(PlAtom::null), nullptr)
+    };
+
+  #undef RD_ODEF
+
+  for ( auto def=read_optdefs; def->name.not_null(); def++ )
+  { if ( def->name == name )
     { def->action(options, opt[1]);
       return;
     }
@@ -996,46 +992,46 @@ lookup_read_optdef_and_apply(rocksdb::ReadOptions *options,
 }
 
 
-typedef void (*WriteOptdefAction)(rocksdb::WriteOptions *options, PlTerm t);
-
-struct WriteOptdef
-{ const char *name;
-  WriteOptdefAction action;
-  PlAtom atom; // Initially PlAtom::null; filled in as-needed by lookup
-};
-
-#define WR_ODEF [](rocksdb::WriteOptions *options, PlTerm arg)
-
-// TODO: move write_optdefs into write_options(), remove the PlAtom(PlAtom::null),
-//       replacing WriteOptdef::name with PlAtom ... C++ will initialize the
-//       "static" const structure on first use.
-static WriteOptdef write_optdefs[] =
-{ {         "sync",                           WR_ODEF {
-    options->sync                           = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "disableWAL",                     WR_ODEF {
-    options->disableWAL                     = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "ignore_missing_column_families", WR_ODEF {
-    options->ignore_missing_column_families = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "no_slowdown",                    WR_ODEF {
-    options->no_slowdown                    = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "low_pri",                        WR_ODEF {
-    options->low_pri                        = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "memtable_insert_hint_per_batch", WR_ODEF {
-    options->memtable_insert_hint_per_batch = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  // "timestamp" rocksdb::Slice*
-
-  { nullptr, nullptr, PlAtom(PlAtom::null) }
-};
-
-
 static void
 lookup_write_optdef_and_apply(rocksdb::WriteOptions *options,
-			      WriteOptdef opt_defs[],
 			      PlAtom name, PlTerm opt)
-{ for ( auto def=opt_defs; def->name; def++ )
-  { if ( def->atom.is_null() ) // lazilly fill in atoms in lookup table
-      def->atom = PlAtom(def->name);
-    if ( def->atom == name )
+{
+  typedef void (*WriteOptdefAction)(rocksdb::WriteOptions *o, PlTerm t);
+
+  struct WriteOptdef
+  { const PlAtom name;
+    const WriteOptdefAction action;
+
+    WriteOptdef(const char *name_, WriteOptdefAction action_)
+      : name(name_), action(action_) { }
+    WriteOptdef(PlAtom atom_, WriteOptdefAction action_)
+      : name(atom_), action(action_) { }
+  };
+
+  #define WR_ODEF [](rocksdb::WriteOptions *o, PlTerm arg)
+
+  static const WriteOptdef optdefs[] =
+    { WriteOptdef("sync",                           WR_ODEF {
+                o->sync                           = arg.as_bool(); } ),
+      WriteOptdef("disableWAL",                     WR_ODEF {
+                o->disableWAL                     = arg.as_bool(); } ),
+      WriteOptdef("ignore_missing_column_families", WR_ODEF {
+                o->ignore_missing_column_families = arg.as_bool(); } ),
+      WriteOptdef("no_slowdown",                    WR_ODEF {
+                o->no_slowdown                    = arg.as_bool(); } ),
+      WriteOptdef("low_pri",                        WR_ODEF {
+                o->low_pri                        = arg.as_bool(); } ),
+      WriteOptdef("memtable_insert_hint_per_batch", WR_ODEF {
+                o->memtable_insert_hint_per_batch = arg.as_bool(); } ),
+      //          "timestamp" rocksdb::Slice*
+
+      WriteOptdef(PlAtom(PlAtom::null), nullptr)
+    };
+
+  #undef WR_ODEF
+
+  for ( auto def=optdefs; def->name.not_null(); def++ )
+  { if ( def->name == name )
     { def->action(options, opt[1]);
       return;
     }
@@ -1066,204 +1062,204 @@ options_set_InfoLogLevel(rocksdb::Options *options, PlTerm arg)
 }
 
 
-typedef void (*OptdefAction)(rocksdb::Options *options, PlTerm t);
-
-struct Optdef
-{ const char *name;
-  OptdefAction action;
-  PlAtom atom; // Initially PlAtom::null; filled in as-needed by lookup
-};
-
-#define ODEF [](rocksdb::Options *options, PlTerm arg)
-
-static Optdef optdefs[] =
-{ { "prepare_for_bulk_load",                           ODEF { if ( arg.as_bool() ) options->PrepareForBulkLoad(); }, PlAtom(PlAtom::null) }, // TODO: what to do with false?
-  { "optimize_for_small_db",                           ODEF { if ( arg.as_bool() ) options->OptimizeForSmallDb(); }, PlAtom(PlAtom::null) }, // TODO: what to do with false? - there's no DontOptimizeForSmallDb()
-#ifndef ROCKSDB_LITE
-  { "increase_parallelism",                            ODEF { if ( arg.as_bool() ) options->IncreaseParallelism(); }, PlAtom(PlAtom::null) },
-#endif
-  {         "create_if_missing",                       ODEF {
-    options->create_if_missing                       = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "create_missing_column_families",          ODEF {
-    options->create_missing_column_families          = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "error_if_exists",                         ODEF {
-    options->error_if_exists                         = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "paranoid_checks",                         ODEF {
-    options->paranoid_checks                         = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "track_and_verify_wals_in_manifest",       ODEF {
-    options->track_and_verify_wals_in_manifest       = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  // "env" Env::Default
-  // "rate_limiter" - shared_ptr<RateLimiter>
-  // "sst_file_manager" - shared_ptr<SstFileManager>
-  // "info_log" - shared_ptr<rocksdb::Logger> - see comment in ../README.md
-  { "info_log_level",                                  options_set_InfoLogLevel, PlAtom(PlAtom::null) },
-  {         "max_open_files",                          ODEF {
-    options->max_open_files                          = arg.as_int(); }, PlAtom(PlAtom::null) },
-  {         "max_file_opening_threads",                ODEF {
-    options-> max_file_opening_threads               = arg.as_int(); }, PlAtom(PlAtom::null) },
-  {         "max_total_wal_size",                      ODEF {
-    options->max_total_wal_size                      = arg.as_uint64_t(); }, PlAtom(PlAtom::null) },
-  {         "statistics",                              ODEF {
-    options->statistics = arg.as_bool() ? rocksdb::CreateDBStatistics() : nullptr; }, PlAtom(PlAtom::null) },
-  {         "use_fsync",                               ODEF {
-    options->use_fsync                               = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  // "db_paths" - vector<DbPath>
-  {         "db_log_dir",                              ODEF {
-    options->db_log_dir                              = arg.as_string(PlEncoding::Locale); }, PlAtom(PlAtom::null) },
-  {         "wal_dir",                                 ODEF {
-    options->wal_dir                                 = arg.as_string(PlEncoding::Locale); }, PlAtom(PlAtom::null) },
-  {         "delete_obsolete_files_period_micros",     ODEF {
-    options->delete_obsolete_files_period_micros     = arg.as_uint64_t(); }, PlAtom(PlAtom::null) },
-  {         "max_background_jobs",                     ODEF {
-    options->max_background_jobs                     = arg.as_int(); }, PlAtom(PlAtom::null) },
-  // "base_background_compactions" is obsolete
-  // "max_background_compactions" is obsolete
-  {         "max_subcompactions",                      ODEF {
-    options->max_subcompactions                      = arg.as_uint32_t(); }, PlAtom(PlAtom::null) },
-  // "max_background_flushes" is obsolete
-  {         "max_log_file_size",                       ODEF {
-    options->max_log_file_size                       = arg.as_size_t(); }, PlAtom(PlAtom::null) },
-  {         "log_file_time_to_roll",                   ODEF {
-    options->log_file_time_to_roll                   = arg.as_size_t(); }, PlAtom(PlAtom::null) },
-  {         "keep_log_file_num",                       ODEF {
-    options->keep_log_file_num                       = arg.as_size_t(); }, PlAtom(PlAtom::null) },
-  {         "recycle_log_file_num",                    ODEF {
-    options->recycle_log_file_num                    = arg.as_size_t(); }, PlAtom(PlAtom::null) },
-  {         "max_manifest_file_size",                  ODEF {
-    options->max_manifest_file_size                  = arg.as_uint64_t(); }, PlAtom(PlAtom::null) },
-  {         "table_cache_numshardbits",                ODEF {
-    options->table_cache_numshardbits                = arg.as_int(); }, PlAtom(PlAtom::null) },
-  {         "wal_ttl_seconds",                         ODEF {
-    options->WAL_ttl_seconds                         = arg.as_uint64_t(); }, PlAtom(PlAtom::null) },
-  {         "wal_size_limit_mb",                       ODEF {
-    options->WAL_size_limit_MB                       = arg.as_uint64_t(); }, PlAtom(PlAtom::null) },
-  {         "manifest_preallocation_size",             ODEF {
-    options->manifest_preallocation_size             = arg.as_size_t(); }, PlAtom(PlAtom::null) },
-  {         "allow_mmap_reads",                        ODEF {
-    options->allow_mmap_reads                        = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "allow_mmap_writes",                       ODEF {
-    options->allow_mmap_writes                       = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "use_direct_reads",                        ODEF {
-    options->use_direct_reads                        = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "use_direct_io_for_flush_and_compaction",  ODEF {
-    options->use_direct_io_for_flush_and_compaction  = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "allow_fallocate",                         ODEF {
-    options->allow_fallocate                         = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "is_fd_close_on_exec",                     ODEF {
-    options->is_fd_close_on_exec                     = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  // "skip_log_error_on_recovery" is obsolete
-  {         "stats_dump_period_sec",                   ODEF {
-    options->stats_dump_period_sec                   = arg.as_uint32_t(); }, PlAtom(PlAtom::null) }, // TODO: match: unsigned int stats_dump_period_sec
-  {         "stats_persist_period_sec",                ODEF {
-      options->stats_persist_period_sec                = arg.as_uint32_t(); }, PlAtom(PlAtom::null) }, // TODO: match: unsigned int stats_persist_period_sec
-  {         "persist_stats_to_disk",                   ODEF {
-    options->persist_stats_to_disk                   = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "stats_history_buffer_size",               ODEF {
-    options->stats_history_buffer_size               = arg.as_size_t(); }, PlAtom(PlAtom::null) },
-  {         "advise_random_on_open",                   ODEF {
-    options->advise_random_on_open                   = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "db_write_buffer_size",                    ODEF {
-    options->db_write_buffer_size                    = arg.as_size_t(); }, PlAtom(PlAtom::null) },
-  // "write_buffer_manager" - shared_ptr<WriteBufferManager>
-  // "access_hint_on_compaction_start" - enum AccessHint
-  // TODO: "new_table_reader_for_compaction_inputs"  removed from rocksdb/include/options.h?
-  // {         "new_table_reader_for_compaction_inputs",  ODEF {
-//   options->new_table_reader_for_compaction_inputs  = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "compaction_readahead_size",               ODEF {
-    options->compaction_readahead_size               = arg.as_size_t(); }, PlAtom(PlAtom::null) },
-  {         "random_access_max_buffer_size",           ODEF {
-    options->random_access_max_buffer_size           = arg.as_size_t(); }, PlAtom(PlAtom::null) },
-  {         "writable_file_max_buffer_size",           ODEF {
-    options->writable_file_max_buffer_size           = arg.as_size_t(); }, PlAtom(PlAtom::null) },
-  {         "use_adaptive_mutex",                      ODEF {
-    options->use_adaptive_mutex                      = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "bytes_per_sync",                          ODEF {
-    options->bytes_per_sync                          = arg.as_uint64_t(); }, PlAtom(PlAtom::null) },
-  {         "wal_bytes_per_sync",                      ODEF {
-    options->wal_bytes_per_sync                      = arg.as_uint64_t(); }, PlAtom(PlAtom::null) },
-  {         "strict_bytes_per_sync",                   ODEF {
-    options->strict_bytes_per_sync                   = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  // "listeners" - vector<shared_ptr<EventListener>>
-  {         "enable_thread_tracking",                  ODEF {
-    options->enable_thread_tracking                  = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "delayed_write_rate",                      ODEF {
-    options->delayed_write_rate                      = arg.as_uint64_t(); }, PlAtom(PlAtom::null) },
-  {         "enable_pipelined_write",                  ODEF {
-    options->enable_pipelined_write                  = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "unordered_write",                         ODEF {
-    options->unordered_write                         = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "allow_concurrent_memtable_write",         ODEF {
-    options->allow_concurrent_memtable_write         = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "enable_write_thread_adaptive_yield",      ODEF {
-    options->enable_write_thread_adaptive_yield      = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "max_write_batch_group_size_bytes",        ODEF {
-    options->max_write_batch_group_size_bytes        = arg.as_uint64_t(); }, PlAtom(PlAtom::null) },
-  {         "write_thread_max_yield_usec",             ODEF {
-    options->write_thread_max_yield_usec             = arg.as_uint64_t(); }, PlAtom(PlAtom::null) },
-  {         "write_thread_slow_yield_usec",            ODEF {
-    options->write_thread_slow_yield_usec            = arg.as_uint64_t(); }, PlAtom(PlAtom::null) },
-  {         "skip_stats_update_on_db_open",            ODEF {
-    options->skip_stats_update_on_db_open            = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "skip_checking_sst_file_sizes_on_db_open", ODEF {
-    options->skip_checking_sst_file_sizes_on_db_open = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  // "wal_recovery_mode" - enum WALRecoveryMode
-  {         "allow_2pc",                               ODEF {
-    options->allow_2pc                               = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  // "row_cache" - shared_ptr<Cache>
-  // "wal_filter" - WalFilter*
-  {         "fail_ifoptions_file_error",               ODEF {
-    options->fail_if_options_file_error              = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "dump_malloc_stats",                       ODEF {
-    options->dump_malloc_stats                       = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "avoid_flush_during_recovery",             ODEF {
-    options->avoid_flush_during_recovery             = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "avoid_flush_during_shutdown",             ODEF {
-    options->avoid_flush_during_shutdown             = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "allow_ingest_behind",                     ODEF {
-    options->allow_ingest_behind                     = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  // TODO: "preserve_deletes" removed from rocksdb/include/options.h?
-  // {         "preserve_deletes",                        ODEF {
-//   options->preserve_deletes                        = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "two_write_queues",                        ODEF {
-    options->two_write_queues                        = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "manual_wal_flush",                        ODEF {
-    options->manual_wal_flush                        = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "atomic_flush",                            ODEF {
-    options->atomic_flush                            = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "avoid_unnecessary_blocking_io",           ODEF {
-    options->avoid_unnecessary_blocking_io           = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "write_dbid_to_manifest",                  ODEF {
-    options->write_dbid_to_manifest                  = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "log_readahead_size",                      ODEF {
-    options->write_dbid_to_manifest                  = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  // "file_checksum_gen_factory" - std::shared_ptr<FileChecksumGenFactory>
-  { "best_efforts_recovery",                           ODEF {
-    options->best_efforts_recovery                   = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "max_bgerror_resume_count",                ODEF {
-    options->max_bgerror_resume_count                = arg.as_int(); }, PlAtom(PlAtom::null) },
-  {         "bgerror_resume_retry_interval",           ODEF {
-    options->bgerror_resume_retry_interval           = arg.as_uint64_t(); }, PlAtom(PlAtom::null) },
-  {         "allow_data_in_errors",                    ODEF {
-    options->allow_data_in_errors                    = arg.as_bool(); }, PlAtom(PlAtom::null) },
-  {         "db_host_id",                              ODEF {
-      options->db_host_id                            = arg.as_string(PlEncoding::Locale); }, PlAtom(PlAtom::null) },
-  // "checksum_handoff_file_types" - FileTypeSet
-
-  { nullptr, nullptr, PlAtom(PlAtom::null) }
-};
-
-// TODO: move optdefs into options(), remove the PlAtom(PlAtom::null),
-//       replacing Optdef::name with PlAtom ... C++ will initialize the
-//       "static" const structure on first use.
-
 static void
-lookup_optdef_and_apply(rocksdb::Options *options,
-			Optdef opt_defs[],
-			PlAtom name, PlTerm opt)
-{ for ( auto def=opt_defs; def->name; def++ )
-  { if ( def->atom.is_null() ) // lazilly fill in atoms in lookup table
-      def->atom = PlAtom(def->name);
-    if ( def->atom == name )
+lookup_open_optdef_and_apply(rocksdb::Options *options,
+                             PlAtom name, PlTerm opt)
+{
+  typedef void (*OpenOptdefAction)(rocksdb::Options *options, PlTerm t);
+
+  struct OpenOptdef
+  { const PlAtom name;
+    const OpenOptdefAction action;
+
+    OpenOptdef(const char *name_, OpenOptdefAction action_)
+      : name(name_), action(action_) { }
+    OpenOptdef(PlAtom atom_, OpenOptdefAction action_)
+      : name(atom_), action(action_) { }
+  };
+
+  #define ODEF [](rocksdb::Options *o, PlTerm arg)
+
+  static const OpenOptdef open_optdefs[] =
+    { OpenOptdef("prepare_for_bulk_load",                   ODEF { if ( arg.as_bool() ) o->PrepareForBulkLoad(); } ), // TODO: what to do with false?
+      OpenOptdef("optimize_for_small_db",                   ODEF { if ( arg.as_bool() ) o->OptimizeForSmallDb(); } ), // TODO: what to do with false? - there's no DontOptimizeForSmallDb()
+#ifndef ROCKSDB_LITE
+      OpenOptdef("increase_parallelism",                    ODEF { if ( arg.as_bool() ) o->IncreaseParallelism(); } ),
+#endif
+      OpenOptdef("create_if_missing",                       ODEF {
+               o->create_if_missing                       = arg.as_bool(); } ),
+      OpenOptdef("create_missing_column_families",          ODEF {
+               o->create_missing_column_families          = arg.as_bool(); } ),
+      OpenOptdef("error_if_exists",                         ODEF {
+               o->error_if_exists                         = arg.as_bool(); } ),
+      OpenOptdef("paranoid_checks",                         ODEF {
+               o->paranoid_checks                         = arg.as_bool(); } ),
+      OpenOptdef("track_and_verify_wals_in_manifest",       ODEF {
+               o->track_and_verify_wals_in_manifest       = arg.as_bool(); } ),
+      //         "env" Env::Default
+      //         "rate_limiter" - shared_ptr<RateLimiter>
+      //         "sst_file_manager" - shared_ptr<SstFileManager>
+      //         "info_log" - shared_ptr<rocksdb::Logger> - see comment in ../README.md
+      OpenOptdef("info_log_level",                          options_set_InfoLogLevel ),
+      OpenOptdef("max_open_files",                          ODEF {
+               o->max_open_files                          = arg.as_int(); } ),
+      OpenOptdef("max_file_opening_threads",                ODEF {
+               o-> max_file_opening_threads               = arg.as_int(); } ),
+      OpenOptdef("max_total_wal_size",                      ODEF {
+               o->max_total_wal_size                      = arg.as_uint64_t(); } ),
+      OpenOptdef("statistics",                              ODEF {
+               o->statistics = arg.as_bool() ? rocksdb::CreateDBStatistics() : nullptr; } ),
+      OpenOptdef("use_fsync",                               ODEF {
+               o->use_fsync                               = arg.as_bool(); } ),
+      //         "db_paths" - vector<DbPath>
+      OpenOptdef("db_log_dir",                              ODEF {
+               o->db_log_dir                              = arg.as_string(PlEncoding::Locale); } ),
+      OpenOptdef("wal_dir",                                 ODEF {
+               o->wal_dir                                 = arg.as_string(PlEncoding::Locale); } ),
+      OpenOptdef("delete_obsolete_files_period_micros",     ODEF {
+               o->delete_obsolete_files_period_micros     = arg.as_uint64_t(); } ),
+      OpenOptdef("max_background_jobs",                     ODEF {
+               o->max_background_jobs                     = arg.as_int(); } ),
+      //         "base_background_compactions" is obsolete
+      //         "max_background_compactions" is obsolete
+      OpenOptdef("max_subcompactions",                      ODEF {
+               o->max_subcompactions                      = arg.as_uint32_t(); } ),
+      //         "max_background_flushes" is obsolete
+      OpenOptdef("max_log_file_size",                       ODEF {
+               o->max_log_file_size                       = arg.as_size_t(); } ),
+      OpenOptdef("log_file_time_to_roll",                   ODEF {
+               o->log_file_time_to_roll                   = arg.as_size_t(); } ),
+      OpenOptdef("keep_log_file_num",                       ODEF {
+               o->keep_log_file_num                       = arg.as_size_t(); } ),
+      OpenOptdef("recycle_log_file_num",                    ODEF {
+               o->recycle_log_file_num                    = arg.as_size_t(); } ),
+      OpenOptdef("max_manifest_file_size",                  ODEF {
+               o->max_manifest_file_size                  = arg.as_uint64_t(); } ),
+      OpenOptdef("table_cache_numshardbits",                ODEF {
+               o->table_cache_numshardbits                = arg.as_int(); } ),
+      OpenOptdef("wal_ttl_seconds",                         ODEF {
+               o->WAL_ttl_seconds                         = arg.as_uint64_t(); } ),
+      OpenOptdef("wal_size_limit_mb",                       ODEF {
+               o->WAL_size_limit_MB                       = arg.as_uint64_t(); } ),
+      OpenOptdef("manifest_preallocation_size",             ODEF {
+               o->manifest_preallocation_size             = arg.as_size_t(); } ),
+      OpenOptdef("allow_mmap_reads",                        ODEF {
+               o->allow_mmap_reads                        = arg.as_bool(); } ),
+      OpenOptdef("allow_mmap_writes",                       ODEF {
+               o->allow_mmap_writes                       = arg.as_bool(); } ),
+      OpenOptdef("use_direct_reads",                        ODEF {
+               o->use_direct_reads                        = arg.as_bool(); } ),
+      OpenOptdef("use_direct_io_for_flush_and_compaction",  ODEF {
+               o->use_direct_io_for_flush_and_compaction  = arg.as_bool(); } ),
+      OpenOptdef("allow_fallocate",                         ODEF {
+               o->allow_fallocate                         = arg.as_bool(); } ),
+      OpenOptdef("is_fd_close_on_exec",                     ODEF {
+               o->is_fd_close_on_exec                     = arg.as_bool(); } ),
+      //         "skip_log_error_on_recovery" is obsolete
+      OpenOptdef("stats_dump_period_sec",                   ODEF {
+               o->stats_dump_period_sec                   = arg.as_uint32_t(); } ), // TODO: match: unsigned int stats_dump_period_sec
+      OpenOptdef("stats_persist_period_sec",                ODEF {
+               o->stats_persist_period_sec                = arg.as_uint32_t(); } ), // TODO: match: unsigned int stats_persist_period_sec
+      OpenOptdef("persist_stats_to_disk",                   ODEF {
+               o->persist_stats_to_disk                   = arg.as_bool(); } ),
+      OpenOptdef("stats_history_buffer_size",               ODEF {
+               o->stats_history_buffer_size               = arg.as_size_t(); } ),
+      OpenOptdef("advise_random_on_open",                   ODEF {
+               o->advise_random_on_open                   = arg.as_bool(); } ),
+      OpenOptdef("db_write_buffer_size",                    ODEF {
+               o->db_write_buffer_size                    = arg.as_size_t(); } ),
+      //         "write_buffer_manager" - shared_ptr<WriteBufferManager>
+      //         "access_hint_on_compaction_start" - enum AccessHint
+      //   TODO: "new_table_reader_for_compaction_inputs"  removed from rocksdb/include/options.h?
+      // OpenOptdef("new_table_reader_for_compaction_inputs",  ODEF {
+      //          o->new_table_reader_for_compaction_inputs  = arg.as_bool(); } ),
+      OpenOptdef("compaction_readahead_size",               ODEF {
+               o->compaction_readahead_size               = arg.as_size_t(); } ),
+      OpenOptdef("random_access_max_buffer_size",           ODEF {
+               o->random_access_max_buffer_size           = arg.as_size_t(); } ),
+      OpenOptdef("writable_file_max_buffer_size",           ODEF {
+               o->writable_file_max_buffer_size           = arg.as_size_t(); } ),
+      OpenOptdef("use_adaptive_mutex",                      ODEF {
+               o->use_adaptive_mutex                      = arg.as_bool(); } ),
+      OpenOptdef("bytes_per_sync",                          ODEF {
+               o->bytes_per_sync                          = arg.as_uint64_t(); } ),
+      OpenOptdef("wal_bytes_per_sync",                      ODEF {
+               o->wal_bytes_per_sync                      = arg.as_uint64_t(); } ),
+      OpenOptdef("strict_bytes_per_sync",                   ODEF {
+               o->strict_bytes_per_sync                   = arg.as_bool(); } ),
+      //         "listeners" - vector<shared_ptr<EventListener>>
+      OpenOptdef("enable_thread_tracking",                  ODEF {
+               o->enable_thread_tracking                  = arg.as_bool(); } ),
+      OpenOptdef("delayed_write_rate",                      ODEF {
+               o->delayed_write_rate                      = arg.as_uint64_t(); } ),
+      OpenOptdef("enable_pipelined_write",                  ODEF {
+               o->enable_pipelined_write                  = arg.as_bool(); } ),
+      OpenOptdef("unordered_write",                         ODEF {
+               o->unordered_write                         = arg.as_bool(); } ),
+      OpenOptdef("allow_concurrent_memtable_write",         ODEF {
+               o->allow_concurrent_memtable_write         = arg.as_bool(); } ),
+      OpenOptdef("enable_write_thread_adaptive_yield",      ODEF {
+               o->enable_write_thread_adaptive_yield      = arg.as_bool(); } ),
+      OpenOptdef("max_write_batch_group_size_bytes",        ODEF {
+               o->max_write_batch_group_size_bytes        = arg.as_uint64_t(); } ),
+      OpenOptdef("write_thread_max_yield_usec",             ODEF {
+               o->write_thread_max_yield_usec             = arg.as_uint64_t(); } ),
+      OpenOptdef("write_thread_slow_yield_usec",            ODEF {
+               o->write_thread_slow_yield_usec            = arg.as_uint64_t(); } ),
+      OpenOptdef("skip_stats_update_on_db_open",            ODEF {
+               o->skip_stats_update_on_db_open            = arg.as_bool(); } ),
+      OpenOptdef("skip_checking_sst_file_sizes_on_db_open", ODEF {
+               o->skip_checking_sst_file_sizes_on_db_open = arg.as_bool(); } ),
+      //         "wal_recovery_mode" - enum WALRecoveryMode
+      OpenOptdef("allow_2pc",                               ODEF {
+               o->allow_2pc                               = arg.as_bool(); } ),
+      //         "row_cache" - shared_ptr<Cache>
+      //         "wal_filter" - WalFilter*
+      OpenOptdef("fail_ifoptions_file_error",               ODEF {
+               o->fail_if_options_file_error              = arg.as_bool(); } ),
+      OpenOptdef("dump_malloc_stats",                       ODEF {
+               o->dump_malloc_stats                       = arg.as_bool(); } ),
+      OpenOptdef("avoid_flush_during_recovery",             ODEF {
+               o->avoid_flush_during_recovery             = arg.as_bool(); } ),
+      OpenOptdef("avoid_flush_during_shutdown",             ODEF {
+               o->avoid_flush_during_shutdown             = arg.as_bool(); } ),
+      OpenOptdef("allow_ingest_behind",                     ODEF {
+               o->allow_ingest_behind                     = arg.as_bool(); } ),
+      // TODO: "preserve_deletes" removed from rocksdb/include/options.h?
+      // OpenOptdef("preserve_deletes",                        ODEF {
+      //          o->preserve_deletes                        = arg.as_bool(); } ),
+      OpenOptdef("two_write_queues",                        ODEF {
+               o->two_write_queues                        = arg.as_bool(); } ),
+      OpenOptdef("manual_wal_flush",                        ODEF {
+               o->manual_wal_flush                        = arg.as_bool(); } ),
+      OpenOptdef("atomic_flush",                            ODEF {
+               o->atomic_flush                            = arg.as_bool(); } ),
+      OpenOptdef("avoid_unnecessary_blocking_io",           ODEF {
+               o->avoid_unnecessary_blocking_io           = arg.as_bool(); } ),
+      OpenOptdef("write_dbid_to_manifest",                  ODEF {
+               o->write_dbid_to_manifest                  = arg.as_bool(); } ),
+      OpenOptdef("log_readahead_size",                      ODEF {
+               o->write_dbid_to_manifest                  = arg.as_bool(); } ),
+      //         "file_checksum_gen_factory" - std::shared_ptr<FileChecksumGenFactory>
+      OpenOptdef("best_efforts_recovery",                           ODEF {
+               o->best_efforts_recovery                   = arg.as_bool(); } ),
+      OpenOptdef("max_bgerror_resume_count",                ODEF {
+               o->max_bgerror_resume_count                = arg.as_int(); } ),
+      OpenOptdef("bgerror_resume_retry_interval",           ODEF {
+               o->bgerror_resume_retry_interval           = arg.as_uint64_t(); } ),
+      OpenOptdef("allow_data_in_errors",                    ODEF {
+               o->allow_data_in_errors                    = arg.as_bool(); } ),
+      OpenOptdef("db_host_id",                              ODEF {
+               o->db_host_id                            = arg.as_string(PlEncoding::Locale); } ),
+      //         "checksum_handoff_file_types" - FileTypeSet
+
+      { PlAtom(PlAtom::null), nullptr }
+};
+
+#undef ODEF
+
+  for ( auto def=open_optdefs; def->name.not_null(); def++ )
+  { if ( def->name == name )
     { def->action(options, opt[1]);
       return;
     }
@@ -1318,7 +1314,7 @@ PREDICATE(rocks_open_, 3)
 	else
 	  throw PlDomainError("mode_option", opt[1]);
       } else
-      { lookup_optdef_and_apply(&options, optdefs, name, opt);
+      { lookup_open_optdef_and_apply(&options, name, opt);
       }
     } else
       throw PlTypeError("option", opt);
@@ -1406,7 +1402,7 @@ write_options(PlTerm options_term)
 
     PlCheckFail(opt.name_arity(&name, &arity));
     if ( arity == 1 )
-      lookup_write_optdef_and_apply(&options, write_optdefs, name, opt);
+      lookup_write_optdef_and_apply(&options, name, opt);
     else
       throw PlTypeError("option", opt);
   }
@@ -1464,7 +1460,7 @@ read_options(PlTerm options_term)
     size_t arity;
     PlCheckFail(opt.name_arity(&name, &arity));
     if ( arity == 1 )
-      lookup_read_optdef_and_apply(&options, read_optdefs, name, opt);
+      lookup_read_optdef_and_apply(&options, name, opt);
     else
       throw PlTypeError("option", opt);
   }
