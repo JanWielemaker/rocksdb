@@ -93,6 +93,12 @@ static const char* merge_t_char[] =
 };
 
 
+struct dbref_type_kv
+{ blob_type key;
+  blob_type value;
+};
+
+
 struct dbref
 {
   dbref()
@@ -128,10 +134,7 @@ struct dbref
   PlAtom	 name;			/* alias name (can be PlAtom::null) */
   merger_t	 builtin_merger;	/* C++ Merger */
   PlRecord	 merger;		/* merge option */
-  struct
-  { blob_type key;
-    blob_type value;
-  } type;
+  dbref_type_kv  type;                  /* key and value types */
 };
 
 
@@ -150,7 +153,7 @@ static atom_t load_rocks(IOSTREAM *fd);
 
 static PL_blob_t rocks_blob =
 { .magic   = PL_BLOB_MAGIC,
-  .flags   = PL_BLOB_UNIQUE,  // TODO: 0 or PL_BLOB_NOCOPY (see PrologMergeOperator())
+  .flags   = PL_BLOB_UNIQUE,  // TODO: 0
   .name    = "rocksdb",
   .release = release_rocks_ref,
   .compare = nullptr,
@@ -665,14 +668,14 @@ public:
 
 [[nodiscard]]
 static bool
-call_merger(const dbref *ref, PlTermv av, std::string* new_value,
+call_merger(const dbref_type_kv& type, PlTermv av, std::string* new_value,
 	    rocksdb::Logger* logger)
 { static PlPredicate pred_call6(PlFunctor("call", 6), PlModule("system"));
 
   try
   { PlQuery q(pred_call6, av);
     if ( q.next_solution() )
-    { const auto answer = get_slice(av[5], ref->type.value);
+    { const auto answer = get_slice(av[5], type.value);
       new_value->assign(answer->data(), answer->size());
       return true;
     } else
@@ -689,11 +692,18 @@ call_merger(const dbref *ref, PlTermv av, std::string* new_value,
 class PrologMergeOperator : public rocksdb::MergeOperator
 {
 private:
-  const dbref *ref;
+  dbref_type_kv type;
+  merger_t      builtin_merger;
+  PlRecord      merger;
 
 public:
-  explicit PrologMergeOperator(const dbref *reference)
-    : ref(reference) { }
+  explicit PrologMergeOperator(const dbref& ref)
+    : type(ref.type), builtin_merger(ref.builtin_merger), merger(ref.merger.duplicate())
+  { }
+
+  ~PrologMergeOperator()
+  { merger.erase();
+  }
 
   virtual bool
   FullMerge(const rocksdb::Slice& key,
@@ -709,18 +719,18 @@ public:
 
     for (const auto& value : operand_list)
     { Plx_put_variable(tmp.C_);
-      if ( !unify(tmp, value, ref->type.value) ||
+      if ( !unify(tmp, value, type.value) ||
 	   !list.append(tmp) )
 	return false;
     }
     if ( !list.close() )
       return false;
 
-    if ( av[0].unify_term(ref->merger.term()) &&
+    if ( av[0].unify_term(merger.term()) &&
 	 av[1].unify_atom(ATOM_full) &&
-	 unify(av[2], key, ref->type.key) &&
-	 unify(av[3], existing_value, ref->type.value) )
-      return call_merger(ref, av, new_value, logger);
+	 unify(av[2], key, type.key) &&
+	 unify(av[3], existing_value, type.value) )
+      return call_merger(type, av, new_value, logger);
     else
       return log_exception(logger);
   }
@@ -735,12 +745,12 @@ public:
     PlTermv av(6);
     static const PlAtom ATOM_partial("partial");
 
-    if ( av[0].unify_term(ref->merger.term()) &&
+    if ( av[0].unify_term(merger.term()) &&
 	 av[1].unify_atom(ATOM_partial) &&
-	 unify(av[2], key, ref->type.key) &&
-	 unify(av[3], left_operand, ref->type.value) &&
-	 unify(av[4], right_operand, ref->type.value) )
-      return call_merger(ref, av, new_value, logger);
+	 unify(av[2], key, type.key) &&
+	 unify(av[3], left_operand, type.value) &&
+	 unify(av[4], right_operand, type.value) )
+      return call_merger(type, av, new_value, logger);
     else
       return log_exception(logger);
   }
@@ -808,11 +818,18 @@ sort(std::string *str, blob_type type)
 class ListMergeOperator : public rocksdb::MergeOperator
 {
 private:
-  const dbref *ref;
+  dbref_type_kv type;
+  merger_t      builtin_merger;
+  PlRecord      merger;
 
 public:
-  explicit ListMergeOperator(const dbref *reference)
-    : ref(reference) { }
+  explicit ListMergeOperator(const dbref& ref)
+    : type(ref.type), builtin_merger(ref.builtin_merger), merger(ref.merger.duplicate())
+  { }
+
+  ~ListMergeOperator()
+  { merger.erase();
+  }
 
   virtual bool
   FullMerge(const rocksdb::Slice& key,
@@ -828,8 +845,8 @@ public:
     { s += value;
     }
 
-    if ( ref->builtin_merger == MERGE_SET )
-      sort(&s, ref->type.value);
+    if ( builtin_merger == MERGE_SET )
+      sort(&s, type.value);
     *new_value = s;
     return true;
   }
@@ -845,8 +862,8 @@ public:
     std::string s(left_operand.ToString());
     s += right_operand.ToString();
 
-    if ( ref->builtin_merger == MERGE_SET )
-      sort(&s, ref->type.value);
+    if ( builtin_merger == MERGE_SET )
+      sort(&s, type.value);
     *new_value = s;
     return true;
   }
@@ -1325,9 +1342,9 @@ PREDICATE(rocks_open_, 3)
     ref->name.register_ref();
 
   if ( ref->merger.not_null() )
-    options.merge_operator.reset(new PrologMergeOperator(ref.get()));
+    options.merge_operator.reset(new PrologMergeOperator(*ref));
   else if ( builtin_merger != MERGE_NONE )
-    options.merge_operator.reset(new ListMergeOperator(ref.get()));
+    options.merge_operator.reset(new ListMergeOperator(*ref));
   ok_or_throw_fail(read_only
 		   ? rocksdb::DB::OpenForReadOnly(options, fn, &ref->db)
 		   : rocksdb::DB::Open(options, fn, &ref->db));
