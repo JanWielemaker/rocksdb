@@ -99,6 +99,9 @@ struct dbref_type_kv
 };
 
 
+#define DBREF_MAGIC 0xDB00DB01
+
+
 struct dbref
 {
   dbref()
@@ -111,6 +114,10 @@ struct dbref
       type(           { .key   = BLOB_ATOM,
                         .value = BLOB_ATOM})
   { }
+
+  dbref(const dbref&) = delete;
+  dbref(dbref&&) = delete;
+  dbref& operator =(const dbref&) = delete;
 
   ~dbref()
   { // See also predicate rocks_close/1
@@ -128,6 +135,7 @@ struct dbref
     }
   }
 
+  unsigned magic = DBREF_MAGIC;
   rocksdb::DB	*db;			/* DB handle */
   PlAtom         pathname;              /* DB's absolute file name (for debugging) */
   PlAtom         symbol;		/* associated symbol (used for error terms) */
@@ -138,22 +146,22 @@ struct dbref
 };
 
 
-static void acquire_rocks_ref_(PlAtom eref);
+static void acquire_rocks_ref_(PlAtom aref);
 static bool release_rocks_ref_(PlAtom aref);
-static bool write_rocks_ref_(IOSTREAM *s, PlAtom eref, int flags);
-static bool write_rocks_ref_(IOSTREAM *s, const dbref *reff, int flags);
+static bool write_rocks_ref_(IOSTREAM *s, PlAtom aref, int flags);
+static bool write_rocks_ref_(IOSTREAM *s, const dbref& ref, int flags);
 static bool save_rocks_(PlAtom aref, IOSTREAM *fd);
 static PlAtom load_rocks_(IOSTREAM *fd);
 
 static void acquire_rocks_ref(atom_t symbol);
 static int release_rocks_ref(atom_t aref);
-static int write_rocks_ref(IOSTREAM *s, atom_t eref, int flags);
+static int write_rocks_ref(IOSTREAM *s, atom_t aref, int flags);
 static int save_rocks(atom_t aref, IOSTREAM *fd);
 static atom_t load_rocks(IOSTREAM *fd);
 
 static PL_blob_t rocks_blob =
 { .magic   = PL_BLOB_MAGIC,
-  .flags   = PL_BLOB_UNIQUE,  // TODO: 0
+  .flags   = PL_BLOB_NOCOPY,
   .name    = "rocksdb",
   .release = release_rocks_ref,
   .compare = nullptr,
@@ -234,10 +242,31 @@ rocks_unalias(PlAtom name)
 		 *	 SYMBOL REFERENCES	*
 		 *******************************/
 
+[[nodiscard]]
+static dbref *
+cast_dbref_blob(PlAtom aref)
+{ size_t len;
+  PL_blob_t *type;
+  auto ref = static_cast<dbref *>(aref.blob_data(&len, &type));
+  if ( ref && type == &rocks_blob)
+  { assert(len == sizeof *ref && ref->magic == DBREF_MAGIC);
+    return ref;
+  }
+  return nullptr;
+}
+
+[[nodiscard]]
+static dbref *
+cast_dbref_blob_check(PlAtom aref)
+{ auto ref = cast_dbref_blob(aref);
+  assert(ref);
+  return ref;
+}
+
 static void
-acquire_rocks_ref_(PlAtom eref)
-{ auto ref = *static_cast<dbref **>(eref.blob_data(nullptr, nullptr));
-  ref->symbol = eref;
+acquire_rocks_ref_(PlAtom aref)
+{ auto ref = cast_dbref_blob_check(aref);
+  ref->symbol = aref;
 }
 
 static void
@@ -248,22 +277,22 @@ acquire_rocks_ref(atom_t symbol)
 
 [[nodiscard]]
 static bool
-write_rocks_ref_(IOSTREAM *s, const dbref *ref, int flags)
-{ Sfprintf(s, "<rocksdb>(%p", ref);
-  if ( ref->pathname.not_null() )
-    Sfprintf(s, ",path=%Ws", ref->pathname.as_wstring().c_str());
-  if ( ref->name.not_null() )
-    Sfprintf(s, ",alias=%Ws", ref->name.as_wstring().c_str());
-  if (ref->builtin_merger != MERGE_NONE)
-    Sfprintf(s, ",builtin_merger=%s", merge_t_char[ref->builtin_merger]);
-  if ( ref->merger.not_null() )
-  { auto m(ref->merger.term());
+write_rocks_ref_(IOSTREAM *s, const dbref& ref, int flags)
+{ Sfprintf(s, "<rocksdb>(%p", &ref);
+  if ( ref.pathname.not_null() )
+    Sfprintf(s, ",path=%Ws", ref.pathname.as_wstring().c_str());
+  if ( ref.name.not_null() )
+    Sfprintf(s, ",alias=%Ws", ref.name.as_wstring().c_str());
+  if (ref.builtin_merger != MERGE_NONE)
+    Sfprintf(s, ",builtin_merger=%s", merge_t_char[ref.builtin_merger]);
+  if ( ref.merger.not_null() )
+  { auto m(ref.merger.term());
     if ( m.not_null() )
       Sfprintf(s, ",merger=%Ws", m.as_wstring().c_str());
   }
-  if ( !ref->db )
+  if ( !ref.db )
     Sfprintf(s, ",CLOSED");
-  Sfprintf(s, ",key=%s,value=%s)", blob_type_char[ref->type.key], blob_type_char[ref->type.value]);
+  Sfprintf(s, ",key=%s,value=%s)", blob_type_char[ref.type.key], blob_type_char[ref.type.value]);
   if ( flags&PL_WRT_NEWLINE )
     Sfprintf(s, "\n");
   return true;
@@ -271,15 +300,15 @@ write_rocks_ref_(IOSTREAM *s, const dbref *ref, int flags)
 
 [[nodiscard]]
 static bool
-write_rocks_ref_(IOSTREAM *s, PlAtom eref, int flags)
-{ const auto ref = *static_cast<dbref **>(eref.blob_data(nullptr, nullptr));
-  return write_rocks_ref_(s, ref, flags);
+write_rocks_ref_(IOSTREAM *s, PlAtom aref, int flags)
+{ const auto ref = cast_dbref_blob_check(aref);
+  return write_rocks_ref_(s, *ref, flags);
 }
 
 [[nodiscard]]
 static int // TODO: bool
-write_rocks_ref(IOSTREAM *s, atom_t eref, int flags)
-{ return write_rocks_ref_(s, PlAtom(eref), flags);
+write_rocks_ref(IOSTREAM *s, atom_t aref, int flags)
+{ return write_rocks_ref_(s, PlAtom(aref), flags);
 }
 
 
@@ -290,9 +319,9 @@ GC a rocks dbref blob from the atom garbage collector.
 [[nodiscard]]
 static bool
 release_rocks_ref_(PlAtom aref)
-{ auto ref = *static_cast<dbref **>(aref.blob_data(nullptr, nullptr));
+{ auto ref = cast_dbref_blob_check(aref);
 
-  delete ref; // TODO: delete aref.blob_data() is done by Prolog
+  delete ref;
 
   return true;
 }
@@ -306,7 +335,7 @@ release_rocks_ref(atom_t aref)
 [[nodiscard]]
 static bool
 save_rocks_(PlAtom aref, IOSTREAM *fd)
-{ const auto ref = *static_cast<dbref **>(aref.blob_data(nullptr, nullptr));
+{ const auto ref = cast_dbref_blob_check(aref);
   (void)fd;
 
   return PL_warning("Cannot save reference to <rocksdb>(%p)", ref);
@@ -341,15 +370,7 @@ load_rocks(IOSTREAM *fd)
 [[nodiscard]]
 static dbref *
 symbol_dbref(PlAtom symbol)
-{ size_t len;
-  PL_blob_t *type;
-  const auto data = static_cast<dbref **>(symbol.blob_data(&len, &type));
-
-  if ( data && type == &rocks_blob )
-    { return *data;
-  }
-
-  return static_cast<dbref *>(nullptr);
+{ return cast_dbref_blob(symbol);
 }
 
 
@@ -377,7 +398,7 @@ get_rocks(PlTerm t, bool throw_if_closed=true)
 		 *******************************/
 
 static PlException
-RocksError(const rocksdb::Status &status, const dbref *ref)
+RocksError(const rocksdb::Status& status, const dbref *ref)
 { if ( ref && ref->symbol.not_null() )
     return PlGeneralError(PlCompound("rocks_error",
 				     PlTermv(PlTerm_atom(status.ToString()),
@@ -388,7 +409,7 @@ RocksError(const rocksdb::Status &status, const dbref *ref)
 
 
 static bool
-ok(const rocksdb::Status &status, const dbref *ref = nullptr)
+ok(const rocksdb::Status& status, const dbref *ref)
 { if ( status.ok() )
     return true;
   if ( status.IsNotFound() )
@@ -397,7 +418,7 @@ ok(const rocksdb::Status &status, const dbref *ref = nullptr)
 }
 
 static void
-ok_or_throw_fail(const rocksdb::Status &status, const dbref *ref = nullptr)
+ok_or_throw_fail(const rocksdb::Status& status, const dbref *ref)
 { PlCheckFail(ok(status, ref));
 }
 
@@ -492,7 +513,7 @@ get_slice(PlTerm t, blob_type type)
 
 [[nodiscard]]
 static bool
-unify(PlTerm t, const rocksdb::Slice &s, blob_type type)
+unify(PlTerm t, const rocksdb::Slice& s, blob_type type)
 { switch ( type )
   { case BLOB_ATOM:
       return t.unify_chars(PL_ATOM|REP_UTF8, s.size_, s.data_);
@@ -561,7 +582,7 @@ unify(PlTerm t, const rocksdb::Slice *s, blob_type type)
 
 [[nodiscard]]
 static bool
-unify(PlTerm t, const std::string &s, blob_type type)
+unify(PlTerm t, const std::string& s, blob_type type)
 { rocksdb::Slice sl(s);
 
   return unify(t, sl, type);
@@ -569,7 +590,7 @@ unify(PlTerm t, const std::string &s, blob_type type)
 
 [[nodiscard]]
 static bool
-unify_value(PlTerm t, const rocksdb::Slice &s, merger_t merge, blob_type type)
+unify_value(PlTerm t, const rocksdb::Slice& s, merger_t merge, blob_type type)
 { if ( merge == MERGE_NONE )
    return unify(t, s, type);
 
@@ -622,7 +643,7 @@ unify_value(PlTerm t, const rocksdb::Slice &s, merger_t merge, blob_type type)
 
 [[nodiscard]]
 static bool
-unify_value(PlTerm t, const std::string &s, merger_t merge, blob_type type)
+unify_value(PlTerm t, const std::string& s, merger_t merge, blob_type type)
 { rocksdb::Slice sl(s);
 
   return unify_value(t, sl, merge, type);
@@ -682,7 +703,7 @@ call_merger(const dbref_type_kv& type, PlTermv av, std::string* new_value,
     { Log(logger, "merger failed");
       return false;
     }
-  } catch(PlException &ex)
+  } catch(PlException& ex)
   { Log(logger, "%s", ex.as_string(PlEncoding::UTF8).c_str());
     throw;
   }
@@ -934,48 +955,49 @@ lookup_read_optdef_and_apply(rocksdb::ReadOptions *options,
       : name(atom_), action(action_) { }
   };
 
+  // TODO: #define RD_ODEF [options](PlTerm arg)
   #define RD_ODEF [](rocksdb::ReadOptions *o, PlTerm arg)
 
   static const ReadOptdef read_optdefs[] =
     {       // "snapshot" const Snapshot*
-            // "iterate_lower_bound" const rocksdb::Slice*
-            // "iterate_upper_bound" const rocksdb::Slice*
+	    // "iterate_lower_bound" const rocksdb::Slice*
+	    // "iterate_upper_bound" const rocksdb::Slice*
       ReadOptdef("readahead_size",                       RD_ODEF {
-               o->readahead_size                       = arg.as_size_t(); } ),
+	       o->readahead_size                       = arg.as_size_t(); } ),
       ReadOptdef("max_skippable_internal_keys",          RD_ODEF {
-               o->max_skippable_internal_keys          = arg.as_uint64_t(); } ),
-              // "read_tier" ReadTier
+	       o->max_skippable_internal_keys          = arg.as_uint64_t(); } ),
+	      // "read_tier" ReadTier
       ReadOptdef("verify_checksums",                     RD_ODEF {
-               o->verify_checksums                     = arg.as_bool(); } ),
+	       o->verify_checksums                     = arg.as_bool(); } ),
       ReadOptdef("fill_cache",                           RD_ODEF {
-               o->fill_cache                           = arg.as_bool(); } ),
+	       o->fill_cache                           = arg.as_bool(); } ),
       ReadOptdef("tailing",                              RD_ODEF {
-               o->tailing                              = arg.as_bool(); } ),
-              // "managed" - not used any more
+	       o->tailing                              = arg.as_bool(); } ),
+	      // "managed" - not used any more
       ReadOptdef("total_order_seek",                     RD_ODEF {
-               o->total_order_seek                     = arg.as_bool(); } ),
+	       o->total_order_seek                     = arg.as_bool(); } ),
       ReadOptdef("auto_prefix_mode",                     RD_ODEF {
-               o->auto_prefix_mode                     = arg.as_bool(); } ),
+	       o->auto_prefix_mode                     = arg.as_bool(); } ),
       ReadOptdef("prefix_same_as_start",                 RD_ODEF {
-               o->prefix_same_as_start                 = arg.as_bool(); } ),
+	       o->prefix_same_as_start                 = arg.as_bool(); } ),
       ReadOptdef("pin_data",                             RD_ODEF {
-               o->pin_data                             = arg.as_bool(); } ),
+	       o->pin_data                             = arg.as_bool(); } ),
       ReadOptdef("background_purge_on_iterator_cleanup", RD_ODEF {
-               o->background_purge_on_iterator_cleanup = arg.as_bool(); } ),
+	       o->background_purge_on_iterator_cleanup = arg.as_bool(); } ),
       ReadOptdef("ignore_range_deletions",               RD_ODEF {
-               o->ignore_range_deletions               = arg.as_bool(); } ),
-              // "table_filter" std::function<bool(const TableProperties&)>
-        // TODO: "iter_start_seqnum" removed from rocksdb/include/options.h?
-        // {         "iter_start_seqnum",                    RD_ODEF {
-        //         o->iter_start_seqnum                    = static_cast<SequenceNumber>(arg); } },
-        //       "timestamp" rocksdb::Slice*
-        //       "iter_start_ts" rocksdb::Slice*
+	       o->ignore_range_deletions               = arg.as_bool(); } ),
+	      // "table_filter" std::function<bool(const TableProperties&)>
+	// TODO: "iter_start_seqnum" removed from rocksdb/include/options.h?
+	// {         "iter_start_seqnum",                    RD_ODEF {
+	//         o->iter_start_seqnum                    = static_cast<SequenceNumber>(arg); } },
+	//       "timestamp" rocksdb::Slice*
+	//       "iter_start_ts" rocksdb::Slice*
       ReadOptdef("deadline",                             RD_ODEF {
-               o->deadline                             = static_cast<std::chrono::microseconds>(arg.as_int64_t()); } ),
+	       o->deadline                             = static_cast<std::chrono::microseconds>(arg.as_int64_t()); } ),
       ReadOptdef("io_timeout",                           RD_ODEF {
-               o->io_timeout                           = static_cast<std::chrono::microseconds>(arg.as_int64_t()); } ),
+	       o->io_timeout                           = static_cast<std::chrono::microseconds>(arg.as_int64_t()); } ),
       ReadOptdef("value_size_soft_limit",                RD_ODEF {
-               o->value_size_soft_limit                = arg.as_uint64_t(); } ),
+	       o->value_size_soft_limit                = arg.as_uint64_t(); } ),
 
       ReadOptdef(PlAtom(PlAtom::null), nullptr)
     };
@@ -1008,21 +1030,22 @@ lookup_write_optdef_and_apply(rocksdb::WriteOptions *options,
       : name(atom_), action(action_) { }
   };
 
+  // TODO: #define WR_ODEF [options](PlTerm arg)
   #define WR_ODEF [](rocksdb::WriteOptions *o, PlTerm arg)
 
   static const WriteOptdef optdefs[] =
     { WriteOptdef("sync",                           WR_ODEF {
-                o->sync                           = arg.as_bool(); } ),
+		o->sync                           = arg.as_bool(); } ),
       WriteOptdef("disableWAL",                     WR_ODEF {
-                o->disableWAL                     = arg.as_bool(); } ),
+		o->disableWAL                     = arg.as_bool(); } ),
       WriteOptdef("ignore_missing_column_families", WR_ODEF {
-                o->ignore_missing_column_families = arg.as_bool(); } ),
+		o->ignore_missing_column_families = arg.as_bool(); } ),
       WriteOptdef("no_slowdown",                    WR_ODEF {
-                o->no_slowdown                    = arg.as_bool(); } ),
+		o->no_slowdown                    = arg.as_bool(); } ),
       WriteOptdef("low_pri",                        WR_ODEF {
-                o->low_pri                        = arg.as_bool(); } ),
+		o->low_pri                        = arg.as_bool(); } ),
       WriteOptdef("memtable_insert_hint_per_batch", WR_ODEF {
-                o->memtable_insert_hint_per_batch = arg.as_bool(); } ),
+		o->memtable_insert_hint_per_batch = arg.as_bool(); } ),
       //          "timestamp" rocksdb::Slice*
 
       WriteOptdef(PlAtom(PlAtom::null), nullptr)
@@ -1064,7 +1087,7 @@ options_set_InfoLogLevel(rocksdb::Options *options, PlTerm arg)
 
 static void
 lookup_open_optdef_and_apply(rocksdb::Options *options,
-                             PlAtom name, PlTerm opt)
+			     PlAtom name, PlTerm opt)
 {
   typedef void (*OpenOptdefAction)(rocksdb::Options *options, PlTerm t);
 
@@ -1078,6 +1101,7 @@ lookup_open_optdef_and_apply(rocksdb::Options *options,
       : name(atom_), action(action_) { }
   };
 
+  // TODO: #define ODEF [options](PlTerm arg)
   #define ODEF [](rocksdb::Options *o, PlTerm arg)
 
   static const OpenOptdef open_optdefs[] =
@@ -1087,170 +1111,170 @@ lookup_open_optdef_and_apply(rocksdb::Options *options,
       OpenOptdef("increase_parallelism",                    ODEF { if ( arg.as_bool() ) o->IncreaseParallelism(); } ),
 #endif
       OpenOptdef("create_if_missing",                       ODEF {
-               o->create_if_missing                       = arg.as_bool(); } ),
+	       o->create_if_missing                       = arg.as_bool(); } ),
       OpenOptdef("create_missing_column_families",          ODEF {
-               o->create_missing_column_families          = arg.as_bool(); } ),
+	       o->create_missing_column_families          = arg.as_bool(); } ),
       OpenOptdef("error_if_exists",                         ODEF {
-               o->error_if_exists                         = arg.as_bool(); } ),
+	       o->error_if_exists                         = arg.as_bool(); } ),
       OpenOptdef("paranoid_checks",                         ODEF {
-               o->paranoid_checks                         = arg.as_bool(); } ),
+	       o->paranoid_checks                         = arg.as_bool(); } ),
       OpenOptdef("track_and_verify_wals_in_manifest",       ODEF {
-               o->track_and_verify_wals_in_manifest       = arg.as_bool(); } ),
+	       o->track_and_verify_wals_in_manifest       = arg.as_bool(); } ),
       //         "env" Env::Default
       //         "rate_limiter" - shared_ptr<RateLimiter>
       //         "sst_file_manager" - shared_ptr<SstFileManager>
       //         "info_log" - shared_ptr<rocksdb::Logger> - see comment in ../README.md
       OpenOptdef("info_log_level",                          options_set_InfoLogLevel ),
       OpenOptdef("max_open_files",                          ODEF {
-               o->max_open_files                          = arg.as_int(); } ),
+	       o->max_open_files                          = arg.as_int(); } ),
       OpenOptdef("max_file_opening_threads",                ODEF {
-               o-> max_file_opening_threads               = arg.as_int(); } ),
+	       o-> max_file_opening_threads               = arg.as_int(); } ),
       OpenOptdef("max_total_wal_size",                      ODEF {
-               o->max_total_wal_size                      = arg.as_uint64_t(); } ),
+	       o->max_total_wal_size                      = arg.as_uint64_t(); } ),
       OpenOptdef("statistics",                              ODEF {
-               o->statistics = arg.as_bool() ? rocksdb::CreateDBStatistics() : nullptr; } ),
+	       o->statistics = arg.as_bool() ? rocksdb::CreateDBStatistics() : nullptr; } ),
       OpenOptdef("use_fsync",                               ODEF {
-               o->use_fsync                               = arg.as_bool(); } ),
+	       o->use_fsync                               = arg.as_bool(); } ),
       //         "db_paths" - vector<DbPath>
       OpenOptdef("db_log_dir",                              ODEF {
-               o->db_log_dir                              = arg.as_string(PlEncoding::Locale); } ),
+	       o->db_log_dir                              = arg.as_string(PlEncoding::Locale); } ),
       OpenOptdef("wal_dir",                                 ODEF {
-               o->wal_dir                                 = arg.as_string(PlEncoding::Locale); } ),
+	       o->wal_dir                                 = arg.as_string(PlEncoding::Locale); } ),
       OpenOptdef("delete_obsolete_files_period_micros",     ODEF {
-               o->delete_obsolete_files_period_micros     = arg.as_uint64_t(); } ),
+	       o->delete_obsolete_files_period_micros     = arg.as_uint64_t(); } ),
       OpenOptdef("max_background_jobs",                     ODEF {
-               o->max_background_jobs                     = arg.as_int(); } ),
+	       o->max_background_jobs                     = arg.as_int(); } ),
       //         "base_background_compactions" is obsolete
       //         "max_background_compactions" is obsolete
       OpenOptdef("max_subcompactions",                      ODEF {
-               o->max_subcompactions                      = arg.as_uint32_t(); } ),
+	       o->max_subcompactions                      = arg.as_uint32_t(); } ),
       //         "max_background_flushes" is obsolete
       OpenOptdef("max_log_file_size",                       ODEF {
-               o->max_log_file_size                       = arg.as_size_t(); } ),
+	       o->max_log_file_size                       = arg.as_size_t(); } ),
       OpenOptdef("log_file_time_to_roll",                   ODEF {
-               o->log_file_time_to_roll                   = arg.as_size_t(); } ),
+	       o->log_file_time_to_roll                   = arg.as_size_t(); } ),
       OpenOptdef("keep_log_file_num",                       ODEF {
-               o->keep_log_file_num                       = arg.as_size_t(); } ),
+	       o->keep_log_file_num                       = arg.as_size_t(); } ),
       OpenOptdef("recycle_log_file_num",                    ODEF {
-               o->recycle_log_file_num                    = arg.as_size_t(); } ),
+	       o->recycle_log_file_num                    = arg.as_size_t(); } ),
       OpenOptdef("max_manifest_file_size",                  ODEF {
-               o->max_manifest_file_size                  = arg.as_uint64_t(); } ),
+	       o->max_manifest_file_size                  = arg.as_uint64_t(); } ),
       OpenOptdef("table_cache_numshardbits",                ODEF {
-               o->table_cache_numshardbits                = arg.as_int(); } ),
+	       o->table_cache_numshardbits                = arg.as_int(); } ),
       OpenOptdef("wal_ttl_seconds",                         ODEF {
-               o->WAL_ttl_seconds                         = arg.as_uint64_t(); } ),
+	       o->WAL_ttl_seconds                         = arg.as_uint64_t(); } ),
       OpenOptdef("wal_size_limit_mb",                       ODEF {
-               o->WAL_size_limit_MB                       = arg.as_uint64_t(); } ),
+	       o->WAL_size_limit_MB                       = arg.as_uint64_t(); } ),
       OpenOptdef("manifest_preallocation_size",             ODEF {
-               o->manifest_preallocation_size             = arg.as_size_t(); } ),
+	       o->manifest_preallocation_size             = arg.as_size_t(); } ),
       OpenOptdef("allow_mmap_reads",                        ODEF {
-               o->allow_mmap_reads                        = arg.as_bool(); } ),
+	       o->allow_mmap_reads                        = arg.as_bool(); } ),
       OpenOptdef("allow_mmap_writes",                       ODEF {
-               o->allow_mmap_writes                       = arg.as_bool(); } ),
+	       o->allow_mmap_writes                       = arg.as_bool(); } ),
       OpenOptdef("use_direct_reads",                        ODEF {
-               o->use_direct_reads                        = arg.as_bool(); } ),
+	       o->use_direct_reads                        = arg.as_bool(); } ),
       OpenOptdef("use_direct_io_for_flush_and_compaction",  ODEF {
-               o->use_direct_io_for_flush_and_compaction  = arg.as_bool(); } ),
+	       o->use_direct_io_for_flush_and_compaction  = arg.as_bool(); } ),
       OpenOptdef("allow_fallocate",                         ODEF {
-               o->allow_fallocate                         = arg.as_bool(); } ),
+	       o->allow_fallocate                         = arg.as_bool(); } ),
       OpenOptdef("is_fd_close_on_exec",                     ODEF {
-               o->is_fd_close_on_exec                     = arg.as_bool(); } ),
+	       o->is_fd_close_on_exec                     = arg.as_bool(); } ),
       //         "skip_log_error_on_recovery" is obsolete
       OpenOptdef("stats_dump_period_sec",                   ODEF {
-               o->stats_dump_period_sec                   = arg.as_uint32_t(); } ), // TODO: match: unsigned int stats_dump_period_sec
+	       o->stats_dump_period_sec                   = arg.as_uint32_t(); } ), // TODO: match: unsigned int stats_dump_period_sec
       OpenOptdef("stats_persist_period_sec",                ODEF {
-               o->stats_persist_period_sec                = arg.as_uint32_t(); } ), // TODO: match: unsigned int stats_persist_period_sec
+	       o->stats_persist_period_sec                = arg.as_uint32_t(); } ), // TODO: match: unsigned int stats_persist_period_sec
       OpenOptdef("persist_stats_to_disk",                   ODEF {
-               o->persist_stats_to_disk                   = arg.as_bool(); } ),
+	       o->persist_stats_to_disk                   = arg.as_bool(); } ),
       OpenOptdef("stats_history_buffer_size",               ODEF {
-               o->stats_history_buffer_size               = arg.as_size_t(); } ),
+	       o->stats_history_buffer_size               = arg.as_size_t(); } ),
       OpenOptdef("advise_random_on_open",                   ODEF {
-               o->advise_random_on_open                   = arg.as_bool(); } ),
+	       o->advise_random_on_open                   = arg.as_bool(); } ),
       OpenOptdef("db_write_buffer_size",                    ODEF {
-               o->db_write_buffer_size                    = arg.as_size_t(); } ),
+	       o->db_write_buffer_size                    = arg.as_size_t(); } ),
       //         "write_buffer_manager" - shared_ptr<WriteBufferManager>
       //         "access_hint_on_compaction_start" - enum AccessHint
       //   TODO: "new_table_reader_for_compaction_inputs"  removed from rocksdb/include/options.h?
       // OpenOptdef("new_table_reader_for_compaction_inputs",  ODEF {
       //          o->new_table_reader_for_compaction_inputs  = arg.as_bool(); } ),
       OpenOptdef("compaction_readahead_size",               ODEF {
-               o->compaction_readahead_size               = arg.as_size_t(); } ),
+	       o->compaction_readahead_size               = arg.as_size_t(); } ),
       OpenOptdef("random_access_max_buffer_size",           ODEF {
-               o->random_access_max_buffer_size           = arg.as_size_t(); } ),
+	       o->random_access_max_buffer_size           = arg.as_size_t(); } ),
       OpenOptdef("writable_file_max_buffer_size",           ODEF {
-               o->writable_file_max_buffer_size           = arg.as_size_t(); } ),
+	       o->writable_file_max_buffer_size           = arg.as_size_t(); } ),
       OpenOptdef("use_adaptive_mutex",                      ODEF {
-               o->use_adaptive_mutex                      = arg.as_bool(); } ),
+	       o->use_adaptive_mutex                      = arg.as_bool(); } ),
       OpenOptdef("bytes_per_sync",                          ODEF {
-               o->bytes_per_sync                          = arg.as_uint64_t(); } ),
+	       o->bytes_per_sync                          = arg.as_uint64_t(); } ),
       OpenOptdef("wal_bytes_per_sync",                      ODEF {
-               o->wal_bytes_per_sync                      = arg.as_uint64_t(); } ),
+	       o->wal_bytes_per_sync                      = arg.as_uint64_t(); } ),
       OpenOptdef("strict_bytes_per_sync",                   ODEF {
-               o->strict_bytes_per_sync                   = arg.as_bool(); } ),
+	       o->strict_bytes_per_sync                   = arg.as_bool(); } ),
       //         "listeners" - vector<shared_ptr<EventListener>>
       OpenOptdef("enable_thread_tracking",                  ODEF {
-               o->enable_thread_tracking                  = arg.as_bool(); } ),
+	       o->enable_thread_tracking                  = arg.as_bool(); } ),
       OpenOptdef("delayed_write_rate",                      ODEF {
-               o->delayed_write_rate                      = arg.as_uint64_t(); } ),
+	       o->delayed_write_rate                      = arg.as_uint64_t(); } ),
       OpenOptdef("enable_pipelined_write",                  ODEF {
-               o->enable_pipelined_write                  = arg.as_bool(); } ),
+	       o->enable_pipelined_write                  = arg.as_bool(); } ),
       OpenOptdef("unordered_write",                         ODEF {
-               o->unordered_write                         = arg.as_bool(); } ),
+	       o->unordered_write                         = arg.as_bool(); } ),
       OpenOptdef("allow_concurrent_memtable_write",         ODEF {
-               o->allow_concurrent_memtable_write         = arg.as_bool(); } ),
+	       o->allow_concurrent_memtable_write         = arg.as_bool(); } ),
       OpenOptdef("enable_write_thread_adaptive_yield",      ODEF {
-               o->enable_write_thread_adaptive_yield      = arg.as_bool(); } ),
+	       o->enable_write_thread_adaptive_yield      = arg.as_bool(); } ),
       OpenOptdef("max_write_batch_group_size_bytes",        ODEF {
-               o->max_write_batch_group_size_bytes        = arg.as_uint64_t(); } ),
+	       o->max_write_batch_group_size_bytes        = arg.as_uint64_t(); } ),
       OpenOptdef("write_thread_max_yield_usec",             ODEF {
-               o->write_thread_max_yield_usec             = arg.as_uint64_t(); } ),
+	       o->write_thread_max_yield_usec             = arg.as_uint64_t(); } ),
       OpenOptdef("write_thread_slow_yield_usec",            ODEF {
-               o->write_thread_slow_yield_usec            = arg.as_uint64_t(); } ),
+	       o->write_thread_slow_yield_usec            = arg.as_uint64_t(); } ),
       OpenOptdef("skip_stats_update_on_db_open",            ODEF {
-               o->skip_stats_update_on_db_open            = arg.as_bool(); } ),
+	       o->skip_stats_update_on_db_open            = arg.as_bool(); } ),
       OpenOptdef("skip_checking_sst_file_sizes_on_db_open", ODEF {
-               o->skip_checking_sst_file_sizes_on_db_open = arg.as_bool(); } ),
+	       o->skip_checking_sst_file_sizes_on_db_open = arg.as_bool(); } ),
       //         "wal_recovery_mode" - enum WALRecoveryMode
       OpenOptdef("allow_2pc",                               ODEF {
-               o->allow_2pc                               = arg.as_bool(); } ),
+	       o->allow_2pc                               = arg.as_bool(); } ),
       //         "row_cache" - shared_ptr<Cache>
       //         "wal_filter" - WalFilter*
       OpenOptdef("fail_ifoptions_file_error",               ODEF {
-               o->fail_if_options_file_error              = arg.as_bool(); } ),
+	       o->fail_if_options_file_error              = arg.as_bool(); } ),
       OpenOptdef("dump_malloc_stats",                       ODEF {
-               o->dump_malloc_stats                       = arg.as_bool(); } ),
+	       o->dump_malloc_stats                       = arg.as_bool(); } ),
       OpenOptdef("avoid_flush_during_recovery",             ODEF {
-               o->avoid_flush_during_recovery             = arg.as_bool(); } ),
+	       o->avoid_flush_during_recovery             = arg.as_bool(); } ),
       OpenOptdef("avoid_flush_during_shutdown",             ODEF {
-               o->avoid_flush_during_shutdown             = arg.as_bool(); } ),
+	       o->avoid_flush_during_shutdown             = arg.as_bool(); } ),
       OpenOptdef("allow_ingest_behind",                     ODEF {
-               o->allow_ingest_behind                     = arg.as_bool(); } ),
+	       o->allow_ingest_behind                     = arg.as_bool(); } ),
       // TODO: "preserve_deletes" removed from rocksdb/include/options.h?
       // OpenOptdef("preserve_deletes",                        ODEF {
       //          o->preserve_deletes                        = arg.as_bool(); } ),
       OpenOptdef("two_write_queues",                        ODEF {
-               o->two_write_queues                        = arg.as_bool(); } ),
+	       o->two_write_queues                        = arg.as_bool(); } ),
       OpenOptdef("manual_wal_flush",                        ODEF {
-               o->manual_wal_flush                        = arg.as_bool(); } ),
+	       o->manual_wal_flush                        = arg.as_bool(); } ),
       OpenOptdef("atomic_flush",                            ODEF {
-               o->atomic_flush                            = arg.as_bool(); } ),
+	       o->atomic_flush                            = arg.as_bool(); } ),
       OpenOptdef("avoid_unnecessary_blocking_io",           ODEF {
-               o->avoid_unnecessary_blocking_io           = arg.as_bool(); } ),
+	       o->avoid_unnecessary_blocking_io           = arg.as_bool(); } ),
       OpenOptdef("write_dbid_to_manifest",                  ODEF {
-               o->write_dbid_to_manifest                  = arg.as_bool(); } ),
+	       o->write_dbid_to_manifest                  = arg.as_bool(); } ),
       OpenOptdef("log_readahead_size",                      ODEF {
-               o->write_dbid_to_manifest                  = arg.as_bool(); } ),
+	       o->write_dbid_to_manifest                  = arg.as_bool(); } ),
       //         "file_checksum_gen_factory" - std::shared_ptr<FileChecksumGenFactory>
       OpenOptdef("best_efforts_recovery",                           ODEF {
-               o->best_efforts_recovery                   = arg.as_bool(); } ),
+	       o->best_efforts_recovery                   = arg.as_bool(); } ),
       OpenOptdef("max_bgerror_resume_count",                ODEF {
-               o->max_bgerror_resume_count                = arg.as_int(); } ),
+	       o->max_bgerror_resume_count                = arg.as_int(); } ),
       OpenOptdef("bgerror_resume_retry_interval",           ODEF {
-               o->bgerror_resume_retry_interval           = arg.as_uint64_t(); } ),
+	       o->bgerror_resume_retry_interval           = arg.as_uint64_t(); } ),
       OpenOptdef("allow_data_in_errors",                    ODEF {
-               o->allow_data_in_errors                    = arg.as_bool(); } ),
+	       o->allow_data_in_errors                    = arg.as_bool(); } ),
       OpenOptdef("db_host_id",                              ODEF {
-               o->db_host_id                            = arg.as_string(PlEncoding::Locale); } ),
+	       o->db_host_id                            = arg.as_string(PlEncoding::Locale); } ),
       //         "checksum_handoff_file_types" - FileTypeSet
 
       { PlAtom(PlAtom::null), nullptr }
@@ -1326,6 +1350,9 @@ PREDICATE(rocks_open_, 3)
       throw PlPermissionError("alias", "rocksdb", PlTerm_atom(alias));
   }
 
+  // Allocating the blob uses unique_ptr<dbref> so that it'll be
+  // deleted if an error happens - this is disabled by ref.release()
+  // before returning success.
   auto ref = std::make_unique<dbref>();
   ref->merger         = merger;
   ref->builtin_merger = builtin_merger;
@@ -1343,18 +1370,19 @@ PREDICATE(rocks_open_, 3)
     options.merge_operator.reset(new ListMergeOperator(*ref));
   ok_or_throw_fail(read_only
 		   ? rocksdb::DB::OpenForReadOnly(options, fn, &ref->db)
-		   : rocksdb::DB::Open(options, fn, &ref->db));
+		   : rocksdb::DB::Open(options, fn, &ref->db),
+		   ref.get());
 
   if ( ref->name.is_null() )
-    { PlCheckFail(A2.unify_blob(&ref, sizeof ref, &rocks_blob));
+  { PlCheckFail(A2.unify_blob(ref.get(), sizeof *ref, &rocks_blob));
   } else
   { PlTerm_var tmp;
-    PlCheckFail(tmp.unify_blob(&ref, sizeof ref, &rocks_blob));
+    PlCheckFail(tmp.unify_blob(ref.get(), sizeof *ref, &rocks_blob));
     rocks_add_alias(ref->name, tmp.as_atom());
     PlCheckFail(A2.unify_atom(ref->name));
   }
 
-  (void)ref.release(); // ref now owned by Prolog
+  (void)ref.release(); // ref now owned by Prolog, deleted in release_rocks_ref_()
   return true;
 }
 
@@ -1375,7 +1403,7 @@ PREDICATE(rocks_close, 1)
   { auto db = ref->db;
     ref->db = nullptr;
     if ( db )
-      ok_or_throw_fail(db->Close());
+      ok_or_throw_fail(db->Close(), ref);
   }
 
   return true;
@@ -1604,7 +1632,7 @@ PREDICATE_NONDET(rocks_enum_prefix, 5)
 
 
 static void
-batch_operation(const dbref *ref, rocksdb::WriteBatch &batch, PlTerm e)
+batch_operation(const dbref& ref, rocksdb::WriteBatch *batch, PlTerm e)
 { PlAtom name(PlAtom::null);
   size_t arity;
 
@@ -1613,12 +1641,12 @@ batch_operation(const dbref *ref, rocksdb::WriteBatch &batch, PlTerm e)
 
   PlCheckFail(e.name_arity(&name, &arity));
   if ( ATOM_delete == name && arity == 1 )
-  { const auto key = get_slice(e[1], ref->type.key);
-    batch.Delete(key->slice());
+  { const auto key = get_slice(e[1], ref.type.key);
+    batch->Delete(key->slice());
   } else if ( ATOM_put == name && arity == 2 )
-  { const auto key = get_slice(e[1], ref->type.key);
-    const auto value = get_slice(e[2], ref->type.value);
-    batch.Put(key->slice(), value->slice());
+  { const auto key = get_slice(e[1], ref.type.key);
+    const auto value = get_slice(e[2], ref.type.value);
+    batch->Put(key->slice(), value->slice());
   } else
   { throw PlDomainError("rocks_batch_operation", e);
   }
@@ -1632,7 +1660,7 @@ PREDICATE(rocks_batch, 3)
   PlTerm_var e;
 
   while ( tail.next(e) )
-  { batch_operation(ref, batch, e);
+  { batch_operation(*ref, &batch, e);
   }
 
   ok_or_throw_fail(ref->db->Write(write_options(A3), &batch), ref);
