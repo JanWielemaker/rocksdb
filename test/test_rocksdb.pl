@@ -133,7 +133,7 @@ test(options5, [cleanup(delete_db)]) :-
 	    rocks_put(RocksDB, "one", "àmímé níshíkíhéꜜbì"),
 	    rocks_close(RocksDB)).
 
-test(open_twice, [error(rocks_error(_),_), % TODO: error(rocks_error('IO error: lock hold by current process, acquire time 1657004085 acquiring thread 136471553664960: /tmp/test_rocksdb/LOCK: No locks available'),_)
+test(open_twice, [error(rocks_error(_,_)), % TODO: error(rocks_error('IO error: lock hold by current process, acquire time 1657004085 acquiring thread 136471553664960: /tmp/test_rocksdb/LOCK: No locks available'),_)
 		  cleanup(delete_db)]) :-
 	test_db(Dir),
 	setup_call_cleanup(
@@ -385,6 +385,16 @@ test(dup, [setup(setup_db(Dir, DB, [alias('DB')])),
     test_db2(Dir2),
     rocks_close(DB),
     rocks_open(Dir2, DB2, [alias('DB')]).
+test(compare, [setup(setup_db(Dir, DB)),
+               cleanup((cleanup_db(Dir, DB),
+                        cleanup_db(Dir3, DB3)))]) :-
+    % This test assumes blobs get allocated in ascending order; we're
+    % checking that the ordering is by pathname, not by the default
+    % ordering of pointer.
+    test_db3(Dir3),
+    rocks_open(Dir3, DB3, []),
+    assertion(Dir3 @< Dir),
+    assertion(DB3 @< DB).
 
 :- end_tests(alias).
 
@@ -394,6 +404,7 @@ test(dup, [setup(setup_db(Dir, DB, [alias('DB')])),
 
 test_db('/tmp/test_rocksdb').
 test_db2('/tmp/test_rocksdb2').
+test_db3('/tmp/test_rocksd0').
 
 delete_db :-
     test_db(DB),
