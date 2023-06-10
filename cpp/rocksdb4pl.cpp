@@ -93,7 +93,7 @@ A Prolog blob consists of five parts:
       object, these could be read, write, seek, etc.).
 \end{itemize}
 
-For the \ctype{PL_blot_t structure, this API provides a set of
+For the \ctype{PL_blob_t} structure, this API provides a set of
 template functions that allow easily setting up the callbacks, and
 allow defining the corresonding methods int he blob "contents" class.
 
@@ -198,7 +198,7 @@ Explanation of the \ctype{my_blob} structure:
 
 \item The \exam{magic}, \exam{flags}, and \exam{name} flags are required.
 
-\item The \examl{release} and \examl{acquire} fields are required. The
+\item The \exam{release} and \exam{acquire} fields are required. The
       defaults given will normally suffice (see more on this in the
       definition of \exam{my_blob_contents}).
 
@@ -213,7 +213,7 @@ Explanation of the \ctype{my_blob} structure:
       \ctype{my_blob_contents}.
 
 \item The \exam{compare} and/or \exam{write} fields may optionally be
-      defined, analagously to the \exam{acquire} and \examl{release}
+      defined, analagously to the \exam{acquire} and \exam{release}
       fields. If given, you must also add a corresponding
       \exam{compare} and/or \exam{write} method(s) to
       \ctype{my_blob_contents}.
@@ -224,7 +224,7 @@ Explanation of the \ctype{my_blob_contents} structure:
 
 \begin{itemize}
 
-\item \exam{PlBlob<my_blob> provides default methods plus a few
+\item \ctype{PlBlob<my_blob>} provides default methods plus a few
       utility methods:
       \begin{itemize}
       \item Copy and move constructors are disabled, as is the
@@ -296,31 +296,6 @@ Explanation of close_my_blob/1:
       \exam{cast_blob_check<my_blob_contents>(A1.as_atom())}.
 
 \end{itemize}
-
-\subsubsection{A digression on the semantics of atoms and equality}
-\label{sec:cppw-blobs-equality}
-
-Prolog atoms differ from strings in that atom equality can be
-determined simply by comparing the atom indexes without comparing the
-string values. If the \const[PL_BLOB_UNIQUE} flag is set, then every
-time a blob is created, it is looked up in the atom table to see if
-there is another blob with the same bit pattern. If the flag is not
-set, each time a blob is created, it gets a new entry in the atom
-table.
-
-Things become a bit more complicated when we want to sort blobs.  If
-the user defines the \cfuncref{compare}{} function to return 0
-("equal") based on only some of the fields in the blob, then it is
-possible for the \cfuncref{compare}{} to mark two blobs as equal even
-if they have different indexes in the atom table. To avoid this
-inconsistency, if the \cfuncref{compare}{} function determines that
-the two blobs are equivalent, it should still do a final comparison
-using the blob pointers to enforce a total ordering -
-\cfuncref{compare_using_ptrs}{} will do that. For example, the blob
-for PCRE2 regular expressions compares the patterns of the two blobs
-and if they are equal, compares the blob pointers. In this way, if two
-blobs have the same pattern, they will not compare as equal, so sort/2
-won't remove one of them as a duplicate.
 
  ***/
 
