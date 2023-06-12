@@ -47,364 +47,6 @@
 
 #include <SWI-cpp2.cpp> // This could be put in a separate file
 
-// ------------------- To be added to SWI-cpp2.h for blobs -----------
-
-// TODO: these should be in a namespace
-
-/*** Documentation (This will go into pl2cpp2.doc)
-
-\subsection{Blobs}
-\label{sec:cpp2-blobs}
-
-
-Disclaimer:
-The blob API for C++ is not completely general, but is designed to
-make a specific use case easier to write. For other use cases, the
-underlying C API can still be used. The use case is:
-\begin{itemize}
-\item The blob contains the foreign object (e.g., contains a
-      pointer to a database connection).
-\item The blob is created by a predicate that makes the foreign
-      object and stores it (or a pointer to it) within the blob.
-      For example, makes a connection to a database or compiles
-      a regular expression into an internal form.
-\item Optionally, there is a predicate that deletes the foreign object.
-\item The blob will not be subclassed.
-\item The blob is defined as a subclass of \ctype{PlBlob}, which
-      provides a number of fields and methods, of which a few
-      can be overridden in the blob (notably: write(), compare(),
-      and the destructor).
-\item The blob's constructor throws an exception and cleans up
-      any resources if it cannot create the blob.
-\item The foreign object can be deleted when the blob is deleted.
-\item The blob's allocation is controlled by Prolog and its
-      destructor is envoked when the blob is garbage collected.
-end{itemize}
-
-A Prolog blob consists of five parts:
-\begin{itemize}
-\item A \ctype{PL_blob_t} structure that defines the callbacks.
-\item A "contents" structure that contains the blob.
-\item A "create" or "open" predicate that unifies one of its arguments
-      with a newly created blob that contains the foreign object.
-\item (Optionally) a "close" predicate that does the opposit of the
-      "create"/"open" predicate.
-\item Predicates that manipulate the foreign object (e.g., for a file-like
-      object, these could be read, write, seek, etc.).
-\end{itemize}
-
-For the \ctype{PL_blob_t} structure, this API provides a set of
-template functions that allow easily setting up the callbacks, and
-allow defining the corresonding methods int he blob "contents" class.
-
-For the "contents" structure, which is subclassed from \ctype{PlBlob},
-the programmer defines the various fields, a constructor that
-initializes them, and a destructor.  Optionally, methods can be
-defined for one of more of blob \cfuncref{compare}{},
-\cfuncref{write}{}, \cfuncref{save}{}, \cfuncref{load}{} (the
-\cfuncref{acquire}{} and \cfuncref{release}{} callbacks should
-normally be allowed to default to what is defined in \ctype{PlBlob}.
-
-There is a mismatch between how Prolog does memory management (and
-garbage collection) and how C++ does it. In particular, Prolog assumes
-that cleanup will be done in the \cfuncref{release}{} function
-associated with the blob whereas C++ typically does cleanup in a
-destructor. The blob interface gets around this mismatch by providing
-a default \cfuncref{release}{} function that assumes that the blob was
-created using \const{PL_BLOB_NOCOPY} and manages memory using a
-\ctype{std::unique_ptr}.
-
-The C blob interface has a flag that determines how memory is managed:
-\const{PL_BLOB_NOCOPY}. If this is set, Prolog does not do a call to
-cfuncref{free} when the blob is garbage collected; instead, it assumes
-that the blob's cfuncref{release} function will free the memory.
-
-The C++ API for blobs only supports blobs with
-\const{PL_BLOB_NOCOPY}.\footnote{The API can probably also support
-blobs with \const{PL_BLOB_UNIQUE}, but there seems to be little
-point in setting this flag for non-text blobs.}
-
-\subsubsection{How to define a blob using C++}
-\label{sec:cpp2-blobs-howto}
-
-TL;DR: Use PL_BLOB_NOCOPY (or an extra level of indirection) and the
-default \ctype{PlBlob} wrappers; no copy constructor, move
-constructor, or assignment operator; create blob with
-\exam{make_unique}, use \exam{unique_ptr::release}, do \exam{delete}
-in the "release" function.
-
-Here is minimal sample code for creating a blob that owns a connection
-to a database:
-
-\begin{code}
-PL_blob_t my_blob =
-{ .magic   = PL_BLOB_MAGIC,
-  .flags   = PL_BLOB_NOCOPY,
-  .name    = "my_blob",
-  .release = blob_release<my_blob>,
-  .write   = blob_write<my_blob>,
-  .acquire = blob_acquire<my_blob>,
-  .save    = blob_save<my_blob>,
-  .load    = blob_save<my_blob>
-};
-
-struct my_blob_contents : public PlBlob<my_blob>
-{ DbConnection *connection;
-
-  explicit my_blob_contents()
-    : DbConnection(nullptr)) { }
-
-  ~my_blob_contents()
-  { if ( connection )
-    { // This is similar to close_my_blob/1, except there's
-      // no check for an error because there's nothing we
-      // can do on an error because  throwing a C++ exception
-      // inside of C code will cause a runtime error.
-      (void)connection->close();
-    }
-  }
-};
-
-// %! create_my_blob(+Options: list, -MyBlob) is semidet.
-PREDICATE(create_my_blob, 2)
-{ auto ref = std::make_unique<MyBlob>(...);
-  // ... fill in the fields of *ref from options in A1  ...
-  int rc = do_open(..., &ref->connection);
-  if ( !rc )
-    throw PlGeneralError(PlCompound("my_blob_error", ref->symbol_term()));
-  PlCheckFail(A2.unify_blob(ref.get(), sizeof *ref, &my_blob));
-  (void)ref.release();
-  return true;
-
-// %! close_my_blob(+MyBlob) is det.
-// % Close the connection, silently succeeding if is already
-// % closed; throw an exception if something goes wrong.
-PREDICATE(close_my_blob, 1)
-{ auto ref = cast_blob_check<my_blob_contents>(A1.as_atom());
-  auto c = ref->connection;
-  ref->connection = nullptr;
-  if ( c )
-  { int rc = c->close();
-    delete c;
-    if ( !rc )
-      throw PlGeneralError(PlCompound("my_blob_error", ...));
-  }
-  return true;
-}
-\end{code}
-
-Explanation of the \ctype{my_blob} structure:
-\begin{itemize}
-
-\item The \exam{magic}, \exam{flags}, and \exam{name} flags are required.
-
-\item The \exam{release} and \exam{acquire} fields are required. The
-      defaults given will normally suffice (see more on this in the
-      definition of \exam{my_blob_contents}).
-
-\item If the fields \exam{save} and \exam{load} are given, they
-      provide a default implementation that throws an error on an
-      attempt to save the blob (e.g., by using
-      \qsave_program/[1,2]). If they are omitted, the defaults for
-      \exam{save} and \exam{load} are used, which save the internal
-      form of the blob, which is probably not what you want. If you
-      wish to define your own \exam{save} and \exam{load}, you must
-      also add \exam{save} and \exam{load} methods to
-      \ctype{my_blob_contents}.
-
-\item The \exam{compare} and/or \exam{write} fields may optionally be
-      defined, analagously to the \exam{acquire} and \exam{release}
-      fields. If given, you must also add a corresponding
-      \exam{compare} and/or \exam{write} method(s) to
-      \ctype{my_blob_contents}.
-
-\end{itemize}
-
-Explanation of the \ctype{my_blob_contents} structure:
-
-\begin{itemize}
-
-\item \ctype{PlBlob<my_blob>} provides default methods plus a few
-      utility methods:
-      \begin{itemize}
-      \item Copy and move constructors are disabled, as is the
-            assignment operator.
-      \item validate() verifies that the blob is valid, assumign that
-            the default \cfuncref{acquire}{} has been called.
-      \item acquire() is used by the default \cfuncref{acquire}{} function.
-      \item symbol_not_null() tests whether \exam{symbol} has been set
-            (this will normally be the case, unless the \cfuncref{acquire}{}
-            function hasn't been called as part of the blob creation
-            process.
-      \item symbol_term() Creates a term the contains the blob, for
-            use in error terms. It is always safe to use this; if
-            the symbol hasn't bene set, symbol_term() returns a "var" term.
-      \item compare_using_ptrs() The default method of comparison, used to
-            break ties between otherwise equal blobs.
-      \item write() A default implementation that outputs \exam{<my_blob>(ptr)}.
-      \item save() Generates an error when attempting to save the blob.
-      \item laod() generates an error when attemptint to laod the blob.
-      \end{itemize}
-
-\item The constructor must initialize fields so that the destructor
-      can determine whether to delete them or not. Typically, this is
-      done by setting pointers to \const{nullptr} or by setting a
-      flag.
-
-\item The destructor is called by \cfuncref{release}{}, assuming you've
-      set \exam{my_blob::release} to \exam{blob_release<my_blob>}.
-
-\item This blob uses the default methods for compare() and write().
-      You can change this by defining your own compare() and write()
-      methods.  If you define compare(), you must add the related line
-      to \exam{my_blob} and you should call compare_using_ptrs() if
-      your comparison of the two objects shows equality (this breaks
-      the tie for two otherwise equal by distinct objects).
-
-\end{itemize}
-
-Explanation of open_my_blob/2:
-
-\begin{itemize}
-
-\item \exam{std::make_unique<MyBlob>(...)} creates a
-      \ctype{std::unique_ptr<MyBlob>} that is deleted when it goes out
-      of scope. If an exception occurs between the creation of blob
-      (as a \ctype{std::unique_ptr<MyBlob>}) and the call to
-      \cfuncref{unify_blob}{}, the pointer will be freed (and the
-      \ctype{MyBlob} destructor will be called.
-
-\item The exception term contains the blob, using
-      \exam{ref->symbol_term()}.
-
-\item \exam{ref.release()} prevents the pointer from being
-      automatically deleted; it is now "owned" by Prolog and is
-      deleted in the \cfuncref{release}{} function (which is defined in
-      \ctype{PlBlob}).
-
-\end{itemize}
-
-Explanation of close_my_blob/1:
-
-\begin{itemize}
-
-\item This code is similar to ~my_blob_contents(), except it throws
-      an error if something goes wrong during the "close".
-
-\item Other predicates that use the blob access the
-      blob from the arguments the same way, namely
-      \exam{cast_blob_check<my_blob_contents>(A1.as_atom())}.
-
-\end{itemize}
-
- ***/
-
-template<typename C_t> [[nodiscard]]
-static C_t *
-cast_blob(PlAtom aref)
-{ size_t len;
-  PL_blob_t *type;
-  auto ref = static_cast<C_t *>(aref.blob_data(&len, &type));
-  if ( ref && type == ref->blob_t_)
-  { assert(len == sizeof *ref);
-    assert(ref->validate());
-    return ref;
-  }
-  return nullptr;
-}
-
-template<typename C_t> [[nodiscard]]
-static C_t*
-cast_blob_check(PlAtom aref)
-{ auto ref = cast_blob<C_t>(aref);
-  assert(ref);
-  return ref;
-}
-
-template<typename C_t>
-void blob_acquire(atom_t a)
-{ PlAtom a_(a);
-  auto data = cast_blob_check<C_t>(a_);
-  data->acquire(a_);
-}
-
-template<typename C_t> [[nodiscard]]
-int blob_release(atom_t a)
-{ auto data = cast_blob_check<C_t>(PlAtom(a));
-  delete data;
-  return true;
-}
-
-template<typename C_t> [[nodiscard]]
-int blob_compare(atom_t a, atom_t b)
-{ const auto data = cast_blob_check<C_t>(PlAtom(a));
-  return data->compare(PlAtom(b));
-}
-
-template<typename C_t> [[nodiscard]]
-int blob_write(IOSTREAM *s, atom_t a, int flags)
-{ const auto data = cast_blob_check<C_t>(PlAtom(a));
-  return data->write(s, flags);
-}
-
-template<typename C_t> [[nodiscard]]
-int blob_save(atom_t a, IOSTREAM *fd)
-{ const auto data = cast_blob_check<C_t>(PlAtom(a));
-  return data->save(fd);
-}
-
-template<typename C_t> [[nodiscard]]
-atom_t blob_load(IOSTREAM *fd)
-{ return C_t::load(fd).C_;
-}
-
-template<const PL_blob_t& blob_t>
-class PlBlob
-{
-public:
-  explicit PlBlob()
-    : blob_t_(&blob_t),
-      symbol_(PlAtom(PlAtom::null)) // filled in by acquire()
-  { }
-  explicit PlBlob(const PlBlob&) = delete;
-  explicit PlBlob(PlBlob&&) = delete;
-  PlBlob& operator =(const PlBlob&) = delete;
-  ~PlBlob() = default;
-
-  bool validate() const { return blob_t_ == &blob_t; }
-
-  void acquire(PlAtom _symbol) { symbol_ = _symbol; }
-
-  bool symbol_not_null() const { return symbol_.not_null(); }
-  PlTerm symbol_term() const
-  { if ( symbol_not_null() )
-      return PlTerm_atom(symbol_);
-    return PlTerm_var();
-  }
-
-  // TODO: document that release() is handled by the destructor
-
-  // compare() is provided as a fall-back for when other comparison's don't work.
-  // It's OK to specify it; but it's the same as the default comparison
-  int compare_using_ptrs(PlAtom _b) const {
-    const auto b = cast_blob_check<PlBlob>(_b);
-    return this > b ? 1 : this < b ? -1 : 0; }
-
-  bool write(IOSTREAM *s, int flags) const { Sfprintf(s, "<%s>(%p)", blob_t.name, this); return true; }
-
-  bool save(IOSTREAM *fd) const { return PL_warning("Cannot save reference to <%s>(%p)", blob_t.name, this); }
-
-  static PlAtom load(IOSTREAM *fd)
-  { (void)PL_warning("Cannot load reference to <%s>", blob_t.name);
-    PL_fatal_error("Cannot load reference to <%s>", blob_t.name);
-    return PlAtom(PlAtom::null);
-  }
-
-  const PL_blob_t *blob_t_;
-  PlAtom symbol_;		/* associated symbol (used for error terms) */
-};
-
-// ------------------- end: To be added to SWI-cpp2.h for blobs -----------
 
 [[nodiscard]] static PlAtom rocks_get_alias(PlAtom name);
 [[nodiscard]] static PlAtom rocks_get_alias_inside_lock(PlAtom name);
@@ -459,7 +101,6 @@ struct dbref_type_kv
 
 struct dbref;
 
-
 static PL_blob_t rocks_blob =
 { .magic   = PL_BLOB_MAGIC,
   .flags   = PL_BLOB_NOCOPY,
@@ -485,35 +126,35 @@ struct dbref : PlBlob<rocks_blob>
                         .value = BLOB_ATOM})
   { }
 
-  bool write(IOSTREAM *s, int flags) const /* override */
-  { Sfprintf(s, "<%s>(%p", blob_t_->name, this);
-    if ( pathname.not_null() )
-      Sfprintf(s, ",path=%Ws", pathname.as_wstring().c_str());
+  bool write_fields(IOSTREAM *s, int flags) const override
+  { if ( pathname.not_null() )
+      if ( !Sfprintf(s, ",path=%Ws", pathname.as_wstring().c_str()) )
+        return false;
     if ( name.not_null() )
-      Sfprintf(s, ",alias=%Ws", name.as_wstring().c_str());
+      if ( !Sfprintf(s, ",alias=%Ws", name.as_wstring().c_str()) )
+        return false;
     if (builtin_merger != MERGE_NONE)
-      Sfprintf(s, ",builtin_merger=%s", merge_t_char[builtin_merger]);
+      if ( !Sfprintf(s, ",builtin_merger=%s", merge_t_char[builtin_merger]) )
+        return false;
     if ( merger.not_null() )
     { auto m(merger.term());
       if ( m.not_null() )
-	Sfprintf(s, ",merger=%Ws", m.as_wstring().c_str());
+	if ( !Sfprintf(s, ",merger=%Ws", m.as_wstring().c_str()) )
+          return false;
     }
     if ( !db )
-      Sfprintf(s, ",CLOSED");
-    Sfprintf(s, ",key=%s,value=%s)", blob_type_char[type.key], blob_type_char[type.value]);
-    if ( flags&PL_WRT_NEWLINE )
-      Sfprintf(s, "\n");
-    return true;
+      if ( !Sfprintf(s, ",CLOSED") )
+        return false;
+    return Sfprintf(s, ",key=%s,value=%s)", blob_type_char[type.key], blob_type_char[type.value]);
   }
 
-  int compare(PlAtom _b) const
-  { const auto b = cast_blob_check<dbref>(_b);
-    if ( this == b ) // Prolog should have already done this test, but it's cheap
-      return 0;
-    int c_pathname = PlTerm_atom(pathname).compare(PlTerm_atom(b->pathname));
+  int compare_fields(const PlBlob<rocks_blob>* _b_data) const override
+  { // dynamic_cast is safer, but slower:
+    auto b_data = static_cast<const dbref*>(_b_data);
+    int c_pathname = PlTerm_atom(pathname).compare(PlTerm_atom(b_data->pathname));
     if ( c_pathname != 0 )
       return c_pathname;
-    return compare_using_ptrs(_b);
+    return 0;
   }
 
   ~dbref()
