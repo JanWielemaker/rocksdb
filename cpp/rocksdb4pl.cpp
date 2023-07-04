@@ -101,17 +101,7 @@ struct dbref_type_kv
 
 struct dbref;
 
-static PL_blob_t rocks_blob =
-{ .magic   = PL_BLOB_MAGIC,
-  .flags   = PL_BLOB_NOCOPY,
-  .name    = "rocksdb",
-  .release = blob_release<dbref>,
-  .compare = blob_compare<dbref>,
-  .write   = blob_write<dbref>,
-  .acquire = blob_acquire<dbref>,
-  .save    = blob_save<dbref>,
-  .load    = blob_load<dbref>
-};
+static PL_blob_t rocks_blob = PL_BLOB_DEFINITION(dbref, "rocksdb");
 
 
 struct dbref : PlBlob<rocks_blob>
