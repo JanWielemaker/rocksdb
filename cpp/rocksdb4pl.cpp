@@ -116,22 +116,27 @@ static PL_blob_t rocks_blob =
 
 struct dbref : PlBlob<rocks_blob>
 {
-  dbref()
-    : db(             nullptr),
-      pathname(       PlAtom(PlAtom::null)),
-      name(           PlAtom(PlAtom::null)),
-      builtin_merger( MERGE_NONE),
-      merger(         PlRecord(PlRecord::null)),
-      type(           { .key   = BLOB_ATOM,
-                        .value = BLOB_ATOM})
-  { }
+  rocksdb::DB	*db = nullptr;			    // DB handle
+  PlAtom	 pathname = PlAtom(PlAtom::null);   // DB's absolute file name (for debugging)
+  PlAtom	 name     = PlAtom(PlAtom::null);   // alias name (can be PlAtom::null)
+  merger_t	 builtin_merger = MERGE_NONE;	    // C++ Merger
+  PlRecord	 merger = PlRecord(PlRecord::null); // merge option
+  dbref_type_kv  type = {			    // key and value types
+			  .key   = BLOB_ATOM,
+			  .value = BLOB_ATOM};
+
+  explicit dbref() { }
+
+  virtual size_t blob_size_() const override { return sizeof *this; }
 
   bool write_fields(IOSTREAM *s, int flags) const override
   { if ( pathname.not_null() )
-      if ( !Sfprintf(s, ",path=%Ws", pathname.as_wstring().c_str()) )
+      if ( !Sfprintf(s, ",path=") ||
+           !pathname.write(s, flags) )
         return false;
     if ( name.not_null() )
-      if ( !Sfprintf(s, ",alias=%Ws", name.as_wstring().c_str()) )
+      if ( !Sfprintf(s, ",alias=") ||
+           !name.write(s, flags) )
         return false;
     if (builtin_merger != MERGE_NONE)
       if ( !Sfprintf(s, ",builtin_merger=%s", merge_t_char[builtin_merger]) )
@@ -139,8 +144,10 @@ struct dbref : PlBlob<rocks_blob>
     if ( merger.not_null() )
     { auto m(merger.term());
       if ( m.not_null() )
-	if ( !Sfprintf(s, ",merger=%Ws", m.as_wstring().c_str()) )
+      { if ( !Sfprintf(s, ",merger=") ||
+             !m.write(s, 1200, flags) )
           return false;
+      }
     }
     if ( !db )
       if ( !Sfprintf(s, ",CLOSED") )
@@ -172,13 +179,6 @@ struct dbref : PlBlob<rocks_blob>
       delete db;
     }
   }
-
-  rocksdb::DB	*db;			/* DB handle */
-  PlAtom         pathname;              /* DB's absolute file name (for debugging) */
-  PlAtom	 name;			/* alias name (can be PlAtom::null) */
-  merger_t	 builtin_merger;	/* C++ Merger */
-  PlRecord	 merger;		/* merge option */
-  dbref_type_kv  type;                  /* key and value types */
 };
 
 
@@ -1184,7 +1184,7 @@ lookup_open_optdef_and_apply(rocksdb::Options *options,
 
 PREDICATE(rocks_open_, 3)
 { rocksdb::Options options;
-  options.create_if_missing = true;
+  options.create_if_missing = true; // caller can override this default value
   char *fn; // from A1 - assumes that it's already absolute file name
   blob_type key_type   = BLOB_ATOM;
   blob_type value_type = BLOB_ATOM;
@@ -1265,10 +1265,10 @@ PREDICATE(rocks_open_, 3)
 		   ref.get());
 
   if ( ref->name.is_null() )
-  { PlCheckFail(A2.unify_blob(ref.get(), sizeof *ref, &rocks_blob));
+  { PlCheckFail(A2.unify_blob(ref.get()));
   } else
   { PlTerm_var tmp;
-    PlCheckFail(tmp.unify_blob(ref.get(), sizeof *ref, &rocks_blob));
+    PlCheckFail(tmp.unify_blob(ref.get()));
     rocks_add_alias(ref->name, tmp.as_atom());
     PlCheckFail(A2.unify_atom(ref->name));
   }

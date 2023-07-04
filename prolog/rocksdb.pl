@@ -217,9 +217,9 @@ See rocks_open/3 for details.
 %	rocksdb library, the error term is of the form
 %	rocks_error(Message) or rocks_error(Message,Blob).
 %
-%	Most of the `DBOptions` in
-%	`rocksdb/include/rocksdb/options.h` are supported, in addition
-%	to the following options:
+%	Most of the `DBOptions` in `rocksdb/include/rocksdb/options.h`
+%	are supported.  `create_if_exists` defaults to `true`.
+%	Additional options are:
 %
 %	  - alias(+Name)
 %	  Give the database a name instead of using an anonymous
