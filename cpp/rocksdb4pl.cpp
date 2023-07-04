@@ -103,8 +103,7 @@ struct dbref;
 
 static PL_blob_t rocks_blob = PL_BLOB_DEFINITION(dbref, "rocksdb");
 
-
-struct dbref : PlBlob<rocks_blob>
+struct dbref : public PlBlob
 {
   rocksdb::DB	*db = nullptr;			    // DB handle
   PlAtom	 pathname = PlAtom(PlAtom::null);   // DB's absolute file name (for debugging)
@@ -115,9 +114,10 @@ struct dbref : PlBlob<rocks_blob>
 			  .key   = BLOB_ATOM,
 			  .value = BLOB_ATOM};
 
-  explicit dbref() { }
+  explicit dbref() :
+    PlBlob(&rocks_blob) { }
 
-  virtual size_t blob_size_() const override { return sizeof *this; }
+  PL_BLOB_SIZE
 
   bool write_fields(IOSTREAM *s, int flags) const override
   { if ( pathname.not_null() )
@@ -145,7 +145,7 @@ struct dbref : PlBlob<rocks_blob>
     return Sfprintf(s, ",key=%s,value=%s)", blob_type_char[type.key], blob_type_char[type.value]);
   }
 
-  int compare_fields(const PlBlob<rocks_blob>* _b_data) const override
+  int compare_fields(const PlBlob* _b_data) const override
   { // dynamic_cast is safer, but slower:
     auto b_data = static_cast<const dbref*>(_b_data);
     int c_pathname = PlTerm_atom(pathname).compare(PlTerm_atom(b_data->pathname));
@@ -1231,8 +1231,8 @@ PREDICATE(rocks_open_, 3)
   }
 
   // Allocating the blob uses unique_ptr<dbref> so that it'll be
-  // deleted if an error happens - this is disabled by ref.release()
-  // before returning success.
+  // deleted if an error happens - the auto-deletion is disabled by
+  // ref.release() before returning success.
 
   auto ref = std::make_unique<dbref>();
   ref->merger         = merger;
