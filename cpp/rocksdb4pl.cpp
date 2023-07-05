@@ -251,7 +251,7 @@ GC a rocks dbref blob from the atom garbage collector.
 [[nodiscard]]
 static dbref *
 symbol_dbref(PlAtom symbol)
-{ return cast_blob<dbref>(symbol);
+{ return PlBlobV<dbref>::cast(symbol);
 }
 
 
