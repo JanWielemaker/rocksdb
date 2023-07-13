@@ -120,38 +120,46 @@ struct dbref : public PlBlob
   PL_BLOB_SIZE
 
   bool write_fields(IOSTREAM *s, int flags) const override
-  { if ( pathname.not_null() )
-      if ( !Sfprintf(s, ",path=") ||
-           !pathname.write(s, flags) )
-        return false;
-    if ( name.not_null() )
-      if ( !Sfprintf(s, ",alias=") ||
-           !name.write(s, flags) )
-        return false;
-    if (builtin_merger != MERGE_NONE)
-      if ( !Sfprintf(s, ",builtin_merger=%s", merge_t_char[builtin_merger]) )
-        return false;
-    if ( merger.not_null() )
-    { auto m(merger.term());
-      if ( m.not_null() )
-      { if ( !Sfprintf(s, ",merger=") ||
-             !m.write(s, 1200, flags) )
-          return false;
-      }
+  { try
+    { if ( pathname.not_null() )
+	if ( !Sfprintf(s, ",path=") ||
+	     !pathname.write(s, flags) )
+	  return false;
+      if ( name.not_null() )
+	if ( !Sfprintf(s, ",alias=") ||
+	     !name.write(s, flags) )
+	  return false;
+      if (builtin_merger != MERGE_NONE)
+	if ( !Sfprintf(s, ",builtin_merger=%s", merge_t_char[builtin_merger]) )
+	  return false;
+      if ( merger.not_null() )
+	{ auto m(merger.term());
+	  if ( m.not_null() )
+	  { if ( !Sfprintf(s, ",merger=") ||
+		 !m.write(s, 1200, flags) )
+	      return false;
+	  }
+	}
+      if ( !db )
+	if ( !Sfprintf(s, ",CLOSED") )
+	  return false;
+      return Sfprintf(s, ",key=%s,value=%s)", blob_type_char[type.key], blob_type_char[type.value]);
+    } catch ( const PlExceptionBase& )
+    { return false;
     }
-    if ( !db )
-      if ( !Sfprintf(s, ",CLOSED") )
-        return false;
-    return Sfprintf(s, ",key=%s,value=%s)", blob_type_char[type.key], blob_type_char[type.value]);
   }
 
   int compare_fields(const PlBlob* _b_data) const override
   { // dynamic_cast is safer, but slower:
     auto b_data = static_cast<const dbref*>(_b_data);
-    int c_pathname = PlTerm_atom(pathname).compare(PlTerm_atom(b_data->pathname));
-    if ( c_pathname != 0 )
-      return c_pathname;
-    return 0;
+    try
+    { int c_pathname = PlTerm_atom(pathname).compare(PlTerm_atom(b_data->pathname));
+      if ( c_pathname != 0 )
+	return c_pathname;
+      return 0;
+    } catch ( const PlExceptionBase& )
+    { return 0; // TODO: signal an error?
+    }
   }
 
   ~dbref()
