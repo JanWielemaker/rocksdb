@@ -48,12 +48,15 @@
 #include <SWI-cpp2.cpp> // This could be put in a separate file
 
 
+struct dbref;
 [[nodiscard]] static PlAtom rocks_get_alias(PlAtom name);
 [[nodiscard]] static PlAtom rocks_get_alias_inside_lock(PlAtom name);
 static void rocks_add_alias(PlAtom name, PlAtom symbol);
 static void rocks_add_alias_inside_lock(PlAtom name, PlAtom symbol);
 static void rocks_unalias(PlAtom name);
 static void rocks_unalias_inside_lock(PlAtom name);
+static bool ok(const rocksdb::Status& status, const dbref *ref);
+static void ok_or_throw_fail(const rocksdb::Status& status, const dbref *ref);
 
 		 /*******************************
 		 *	       SYMBOL		*
@@ -99,17 +102,18 @@ struct dbref_type_kv
 };
 
 
-struct dbref;
-
 static PL_blob_t rocks_blob = PL_BLOB_DEFINITION(dbref, "rocksdb");
 
 struct dbref : public PlBlob
 {
   rocksdb::DB	*db = nullptr;			    // DB handle
-  PlAtom	 pathname = PlAtom(PlAtom::null);   // DB's absolute file name (for debugging)
+  PlAtom	 pathname = PlAtom(PlAtom::null);   // DB's absolute file name
   PlAtom	 name     = PlAtom(PlAtom::null);   // alias name (can be PlAtom::null)
+  std::string    pathname_s;
+  std::string    name_s;
   merger_t	 builtin_merger = MERGE_NONE;	    // C++ Merger
   PlRecord	 merger = PlRecord(PlRecord::null); // merge option
+  bool           debug = false;
   dbref_type_kv  type = {			    // key and value types
 			  .key   = BLOB_ATOM,
 			  .value = BLOB_ATOM};
@@ -120,33 +124,29 @@ struct dbref : public PlBlob
   PL_BLOB_SIZE
 
   bool write_fields(IOSTREAM *s, int flags) const override
-  { try
-    { if ( pathname.not_null() )
-	if ( !Sfprintf(s, ",path=") ||
-	     !pathname.write(s, flags) )
-	  return false;
-      if ( name.not_null() )
-	if ( !Sfprintf(s, ",alias=") ||
-	     !name.write(s, flags) )
-	  return false;
-      if (builtin_merger != MERGE_NONE)
-	if ( !Sfprintf(s, ",builtin_merger=%s", merge_t_char[builtin_merger]) )
-	  return false;
-      if ( merger.not_null() )
-	{ auto m(merger.term());
-	  if ( m.not_null() )
-	  { if ( !Sfprintf(s, ",merger=") ||
-		 !m.write(s, 1200, flags) )
-	      return false;
-	  }
-	}
-      if ( !db )
-	if ( !Sfprintf(s, ",CLOSED") )
-	  return false;
-      return Sfprintf(s, ",key=%s,value=%s)", blob_type_char[type.key], blob_type_char[type.value]);
-    } catch ( const PlExceptionBase& )
-    { return false;
+  { if ( ! debug )
+      return true;
+    if ( !pathname_s.empty() )
+      if ( Sfprintf(s, ",path=%s", pathname_s.c_str()) < 0 )
+        return false;
+    if ( !name_s.empty() )
+      if ( Sfprintf(s, ",alias=%s", name_s.c_str()) < 0 )
+        return false;
+    if (builtin_merger != MERGE_NONE)
+      if ( Sfprintf(s, ",builtin_merger=%s", merge_t_char[builtin_merger]) < 0 )
+        return false;
+    if ( merger.not_null() )
+    { auto m(merger.term());
+      if ( m.not_null() )
+      { if ( Sfprintf(s, ",merger=") < 0 ||
+             !m.write(s, 1200, flags) )
+          return false;
+      }
     }
+    if ( !db )
+      if ( Sfprintf(s, ",CLOSED") < 0 )
+        return false;
+    return Sfprintf(s, ",key=%s,value=%s)", blob_type_char[type.key], blob_type_char[type.value]) >= 0;
   }
 
   int compare_fields(const PlBlob* _b_data) const override
@@ -162,20 +162,31 @@ struct dbref : public PlBlob
     }
   }
 
-  ~dbref()
-  { // See also predicate rocks_close/1
+  bool close() noexcept
+  { bool rc = true;
+    if ( db )
+    { rc = ok(db->Close(), this);
+      db = nullptr;
+    }
+    if ( pathname.not_null() )
+    { pathname.unregister_ref();
+      pathname.reset();
+    }
     if ( name.not_null() )
     { rocks_unalias(name);
       name.unregister_ref();
+      name.reset();
     }
     if ( merger.not_null() )
-      merger.erase();
-    if ( pathname.not_null() )
-      pathname.unregister_ref();
-    if ( db )
-    { (void)db->Close(); // TODO: print warning on failure?
-      delete db;
+    { merger.erase();
+      merger.reset();
     }
+    return rc;
+  }
+
+  ~dbref()
+  { if ( !close() )
+      Sdprintf("*** ERROR: Close rocksdb failed: %s\n", pathname_s.c_str()); // Can't use PL_warning()
   }
 };
 
@@ -251,28 +262,16 @@ rocks_unalias(PlAtom name)
 		 *******************************/
 
 
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-GC a rocks dbref blob from the atom garbage collector.
-- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-
-
-[[nodiscard]]
-static dbref *
-symbol_dbref(PlAtom symbol)
-{ return PlBlobV<dbref>::cast(symbol);
-}
-
-
 [[nodiscard]]
 static dbref *
 get_rocks(PlTerm t, bool throw_if_closed=true)
 { PlAtom a(t.as_atom()); // Throws type error if not an atom
 
-  auto ref = symbol_dbref(a);
+  auto ref = PlBlobV<dbref>::cast(a);
   if ( !ref )
   { a = rocks_get_alias(a);
     if ( a.not_null() )
-      ref = symbol_dbref(a);
+      ref = PlBlobV<dbref>::cast(a);
   }
   if ( throw_if_closed &&
        ( !ref || !ref->db ) )
@@ -1190,6 +1189,7 @@ PREDICATE(rocks_open_, 3)
   PlAtom alias(PlAtom::null);
   PlRecord merger(PlRecord::null);
   bool read_only = false;
+  bool debug = false;
 
   static const PlAtom ATOM_key("key");
   static const PlAtom ATOM_value("value");
@@ -1199,6 +1199,7 @@ PREDICATE(rocks_open_, 3)
   static const PlAtom ATOM_mode("mode");
   static const PlAtom ATOM_read_write("read_write");
   static const PlAtom ATOM_read_only("read_only");
+  static const PlAtom ATOM_debug("debug");
 
   PlCheckFail(Plx_get_file_name(A1.C_, &fn, PL_FILE_OSPATH));
   PlTerm_tail tail(A3);
@@ -1225,6 +1226,8 @@ PREDICATE(rocks_open_, 3)
 	  read_only = true;
 	else
 	  throw PlDomainError("mode_option", opt[1]);
+      } else if (ATOM_debug == name )
+      { debug = opt[1].as_bool();
       } else
       { lookup_open_optdef_and_apply(&options, name, opt);
       }
@@ -1252,6 +1255,9 @@ PREDICATE(rocks_open_, 3)
   ref->name           = alias;
   if ( ref->name.not_null() )
     ref->name.register_ref();
+  ref->pathname_s     = fn;
+  ref->name_s         = alias.not_null() ? alias.as_string() : "";
+  ref->debug          = debug;
 
   if ( ref->merger.not_null() )
     options.merge_operator.reset(new PrologMergeOperator(*ref));
@@ -1263,15 +1269,15 @@ PREDICATE(rocks_open_, 3)
 		   ref.get());
 
   if ( ref->name.is_null() )
-  { PlCheckFail(A2.unify_blob(ref.get()));
+  { std::unique_ptr<PlBlob> refb(ref.release());
+    PlCheckFail(A2.unify_blob(&refb));
   } else
   { PlTerm_var tmp;
-    PlCheckFail(tmp.unify_blob(ref.get()));
-    rocks_add_alias(ref->name, tmp.as_atom());
-    PlCheckFail(A2.unify_atom(ref->name));
+    std::unique_ptr<PlBlob> refb(ref.release());
+    PlCheckFail(tmp.unify_blob(&refb));
+    rocks_add_alias(alias, tmp.as_atom());
+    PlCheckFail(A2.unify_atom(alias));
   }
-
-  (void)ref.release(); // ref now owned by Prolog, deleted in release_rocks_ref_()
   return true;
 }
 
@@ -1280,21 +1286,7 @@ PREDICATE(rocks_close, 1)
 { const auto ref = get_rocks(A1, false);
   if ( !ref )
     return true;
-
-  // The following code is a subset of dbref::~dbref(), and also can
-  // throw a Prolog error if ref->db->Close() fails.
-
-  if ( ref->name.not_null() )
-  { rocks_unalias(ref->name);
-    // ref->name is needed by write() callabck, so don't do this: ref->name.unregister_ref()
-  }
-
-  { auto db = ref->db;
-    ref->db = nullptr;
-    if ( db )
-      ok_or_throw_fail(db->Close(), ref);
-  }
-
+  PlCheckFail(ref->close());
   return true;
 }
 
