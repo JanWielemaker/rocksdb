@@ -72,6 +72,7 @@
 				  float,double,term])),
 		       value(any),
 		       merge(callable),
+                       debug(boolean),
                        prepare_for_bulk_load(oneof([true])),
                        optimize_for_small_db(oneof([true])),
                        increase_parallelism(oneof([true])),
@@ -279,10 +280,8 @@ See rocks_open/3 for details.
 %	  to have multiple `read_only` opens, but only one
 %	  `read_write` (which also precludes having any `read_only`);
 %	  however, it is recommended to only open a databse once.
-%	  - optimize_for_small_db(true) - Use this if your DB is very
-%           small (like under 1GB) and you don't want to
-%           spend lots of memory for memtables.
-%         - increase_parallelism(true) - see DBOptions::IncreaseParallelism()
+%         - debug(true) Output more information when displaying
+%           the rocksdb "blob".
 % @see https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide
 % @see http://rocksdb.org/blog/2018/08/01/rocksdb-tuning-advisor.html
 % @see https://github.com/EighteenZi/rocksdb_wiki/blob/master/RocksDB-Tuning-Guide.md
