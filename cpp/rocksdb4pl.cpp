@@ -1446,11 +1446,11 @@ enum_key_prefix(const enum_state& state)
 [[nodiscard]]
 static foreign_t
 rocks_enum(PlTermv PL_av, int ac, enum_type type, PlControl handle, rocksdb::ReadOptions options)
-{ PlForeignContextPtr<enum_state> state(handle);
+{ auto state = handle.context_unique_ptr<enum_state>();
 
   switch ( handle.foreign_control() )
   { case PL_FIRST_CALL:
-      state.set(new enum_state(get_rocks(A1)));
+      state.reset(new enum_state(get_rocks(A1)));
       if ( ac >= 4 )
       { if ( !(state->ref->type.key == BLOB_ATOM ||
 	       state->ref->type.key == BLOB_STRING ||
@@ -1478,7 +1478,7 @@ rocks_enum(PlTermv PL_av, int ac, enum_type type, PlControl handle, rocksdb::Rea
 			 state->ref->builtin_merger, state->ref->type.value) )
 	{ state->it->Next();
 	  if ( state->it->Valid() && enum_key_prefix(*state) )
-	  { PL_retry_address(state.keep());
+	  { PL_retry_address(state.release());
 	  } else
 	  { return true;
 	  }
