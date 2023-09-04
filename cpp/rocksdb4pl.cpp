@@ -49,14 +49,151 @@
 
 
 struct dbref;
-[[nodiscard]] static PlAtom rocks_get_alias(PlAtom name);
-[[nodiscard]] static PlAtom rocks_get_alias_inside_lock(PlAtom name);
-static void rocks_add_alias(PlAtom name, PlAtom symbol);
-static void rocks_add_alias_inside_lock(PlAtom name, PlAtom symbol);
-static void rocks_unalias(PlAtom name);
-static void rocks_unalias_inside_lock(PlAtom name);
 static bool ok(const rocksdb::Status& status, const dbref *ref);
 static void ok_or_throw_fail(const rocksdb::Status& status, const dbref *ref);
+
+
+		 /*******************************
+		 *	      ALIAS		*
+		 *******************************/
+
+// The AtomMap class is a wrapper around a std::map, mapping
+// alias names to blobs. The blobs are of typ PlAtom, so this is
+// actually an atom->atom map.
+// The entries are protected by a mutex, so the operations are thread-safe.
+// The operations do appropriate calls to register and unregister the atoms/blobs.
+//
+// The operations are:
+//   PlAtom find(PlAtom name) - look up, returning PlAtom::null if not found
+//   void insert(PlAtom name, PlAtom symbol) - insert, throwing a
+//                              PlPermissionError if it's already there
+//   void erase(PlAtom name) - remove the entry (no error if it's already been removed)
+
+
+template <typename ValueType, typename StoredValueType>
+class AtomMap
+{
+public:
+  explicit AtomMap() { };
+  AtomMap(const AtomMap&) = delete;
+  AtomMap(const AtomMap&&) = delete;
+  AtomMap& operator =(const AtomMap&) = delete;
+  AtomMap& operator =(const AtomMap&&) = delete;
+  ~AtomMap() = default;
+
+  [[nodiscard]]
+  ValueType
+  find(PlAtom key)
+  { std::lock_guard<std::mutex> alias_lock_(alias_lock);
+    return find_inside_lock(key);
+  }
+
+  void
+  insert(PlAtom key, ValueType value)
+  { std::lock_guard<std::mutex> alias_lock_(alias_lock);
+    insert_inside_lock(key, value);
+  }
+
+  void
+  erase(PlAtom key)
+  { std::lock_guard<std::mutex> alias_lock_(alias_lock);
+    erase_inside_lock(key);
+  }
+
+private:
+  [[nodiscard]]
+  ValueType
+  find_inside_lock(PlAtom key)
+  { const auto lookup = alias_entries.find(key.C_);
+    ValueType value(ValueType::null);
+    if ( lookup != alias_entries.end() )
+      stored_value_to_value(lookup->second, &value);
+    return value;
+  }
+
+  void
+  insert_inside_lock(PlAtom key, ValueType value)
+  { const auto lookup = find_inside_lock(key);
+    if ( lookup.is_null() )
+    { StoredValueType stored_value(StoredValueType::null);
+      register_value(value, &stored_value);
+      key.register_ref();
+      alias_entries.insert(std::make_pair(key.C_, stored_value));
+    } else if ( lookup != value )
+    { throw PlPermissionError("alias", "rocksdb", PlTerm_atom(key));
+    }
+  }
+
+  void
+  erase_inside_lock(PlAtom key)
+  { auto lookup = alias_entries.find(key.C_);
+    if ( lookup == alias_entries.end() )
+      return;
+    // TODO: As an alternative to removing the entry, leave it in place
+    //       (with db==nullptr showing that it's been closed; or with
+    //       the value as PlAtom::null), so that rocks_close/1 can
+    //       distinguish an alias lookup that should throw a
+    //       PlExistenceError because it's never been opened.
+    key.unregister_ref();
+    unregister_stored_value(&lookup->second);
+    alias_entries.erase(lookup);
+  }
+
+  // Implementation for map<PlAtom,PlAtom>
+
+  static void
+  register_value(const PlAtom &value, PlAtom *stored_value)
+  { *stored_value = value;
+    stored_value->register_ref();
+  }
+
+  static void
+  stored_value_to_value(const PlAtom &stored_value, PlAtom *value)
+  { *value = stored_value;
+  }
+
+  static void
+  unregister_stored_value(PlAtom *stored_value)
+  { stored_value->unregister_ref();
+  }
+
+  // Implementation for map<PlAtom,PlRecord> (external: PlAtom,PlTerm>)
+
+  static void
+  register_value(const PlTerm &value, PlRecord *stored_value)
+  { *stored_value = value.record();
+  }
+
+  static void
+  stored_value_to_value(const PlRecord &stored_value, PlTerm *value)
+  { PlCheckFail(value->unify_term(stored_value.term()));
+  }
+
+  static void
+  unregister_stored_value(PlRecord *stored_value)
+  { stored_value->erase();
+  }
+
+  // Data - mutex + map
+
+  std::mutex alias_lock;
+  // TODO: Define the necessary operators for PlAtom, so that it can be
+  //       the key instead of atom_t.
+  std::map<atom_t, StoredValueType> alias_entries;
+};
+
+// global
+AtomMap<PlAtom, PlAtom> rocksdb4_alias;
+
+// For testing:
+//
+// AtomMap<PlTerm, PlRecord> unused_map_atom_to_term;
+//
+// void unused_test_atom_to_term()
+// { unused_map_atom_to_term.insert(PlAtom("foo"), PlTerm_atom("bar"));
+//   PlTerm t = unused_map_atom_to_term.find(PlAtom("foo"));
+//   unused_map_atom_to_term.erase(PlAtom("zot"));
+// }
 
 		 /*******************************
 		 *	       SYMBOL		*
@@ -173,7 +310,7 @@ struct dbref : public PlBlob
       pathname.reset();
     }
     if ( name.not_null() )
-    { rocks_unalias(name);
+    { rocksdb4_alias.erase(name);
       name.unregister_ref();
       name.reset();
     }
@@ -192,72 +329,6 @@ struct dbref : public PlBlob
 
 
 		 /*******************************
-		 *	      ALIAS		*
-		 *******************************/
-
-std::mutex rocksdb4pl_alias_lock; // global
-// TODO: Define the necessary operators for PlAtom, so that it can be
-//       the key instead of atom_t.
-static std::map<atom_t, PlAtom> alias_entries;
-
-[[nodiscard]]
-static PlAtom
-rocks_get_alias_inside_lock(PlAtom name)
-{ const auto lookup = alias_entries.find(name.C_);
-  if ( lookup == alias_entries.end() )
-    return PlAtom(PlAtom::null);
-  else
-    return lookup->second;
-}
-
-[[nodiscard]]
-static PlAtom
-rocks_get_alias(PlAtom name)
-{ std::lock_guard<std::mutex> alias_lock_(rocksdb4pl_alias_lock);
-  return rocks_get_alias_inside_lock(name);
-}
-
-static void
-rocks_add_alias_inside_lock(PlAtom name, PlAtom symbol)
-{ const auto lookup = rocks_get_alias_inside_lock(name);
-  if ( lookup.is_null() )
-  { alias_entries.insert(std::make_pair(name.C_, symbol));
-    name.register_ref();
-    symbol.register_ref();
-  } else if ( lookup != symbol )
-  { throw PlPermissionError("alias", "rocksdb", PlTerm_atom(name));
-  }
-}
-
-static void
-rocks_add_alias(PlAtom name, PlAtom symbol)
-{ std::lock_guard<std::mutex> alias_lock_(rocksdb4pl_alias_lock);
-  rocks_add_alias_inside_lock(name, symbol);
-}
-
-static void
-rocks_unalias_inside_lock(PlAtom name)
-{ auto lookup = alias_entries.find(name.C_);
-  if ( lookup == alias_entries.end() )
-    return;
-  // TODO: As an alternative to removing the entry, leave it in place
-  //       (with db==nullptr showing that it's been closed; or with
-  //       the value as PlAtom::null), so that rocks_close/1 can
-  //       distinguish an alias lookup that should throw a
-  //       PlExistenceError because it's never been opened.
-  name.unregister_ref();
-  lookup->second.unregister_ref();  // alias_entries[name].unregister_ref()
-  alias_entries.erase(lookup);
-}
-
-static void
-rocks_unalias(PlAtom name)
-{ std::lock_guard<std::mutex> alias_lock_(rocksdb4pl_alias_lock);
-  rocks_unalias_inside_lock(name);
-}
-
-
-		 /*******************************
 		 *	 SYMBOL REFERENCES	*
 		 *******************************/
 
@@ -269,7 +340,7 @@ get_rocks(PlTerm t, bool throw_if_closed=true)
 
   auto ref = PlBlobV<dbref>::cast(a);
   if ( !ref )
-  { a = rocks_get_alias(a);
+  { a = rocksdb4_alias.find(a);
     if ( a.not_null() )
       ref = PlBlobV<dbref>::cast(a);
   }
@@ -545,7 +616,7 @@ unify_value(PlTerm t, const std::string& s, merger_t merge, blob_type type)
 [[nodiscard]]
 static bool
 log_exception(rocksdb::Logger* logger)
-{ PlTerm_term_t ex(Plx_exception(0));
+{ PlTerm ex(Plx_exception(0));
 
   Log(logger, "%s", ex.as_string(PlEncoding::UTF8).c_str());
   return false; // For convenience, allowing: return log_exception(logger);
@@ -560,7 +631,7 @@ public:
   engine()
   { if ( Plx_thread_self() == -1 )
     { if ( (tid=Plx_thread_attach_engine(nullptr)) < 0 )
-      { PlTerm_term_t ex(Plx_exception(0));
+      { PlTerm ex(Plx_exception(0));
 	if ( ex.not_null() )
 	  throw PlException(ex);
 	else
@@ -1236,7 +1307,7 @@ PREDICATE(rocks_open_, 3)
   }
 
   if ( alias.not_null() )
-  { const auto existing = rocks_get_alias(alias);
+  { const auto existing = rocksdb4_alias.find(alias);
     if ( existing.not_null() )
       throw PlPermissionError("alias", "rocksdb", PlTerm_atom(alias));
   }
@@ -1275,7 +1346,7 @@ PREDICATE(rocks_open_, 3)
   { PlTerm_var tmp;
     std::unique_ptr<PlBlob> refb(ref.release());
     PlCheckFail(tmp.unify_blob(&refb));
-    rocks_add_alias(alias, tmp.as_atom());
+    rocksdb4_alias.insert(alias, tmp.as_atom());
     PlCheckFail(A2.unify_atom(alias));
   }
   return true;
@@ -1292,7 +1363,7 @@ PREDICATE(rocks_close, 1)
 
 
 PREDICATE(rocks_alias_lookup, 2)
-{ PlAtom a(rocks_get_alias(A1.as_atom()));
+{ PlAtom a(rocksdb4_alias.find(A1.as_atom()));
   if ( a.not_null() )
     return A2.unify_atom(a);
   return false;
