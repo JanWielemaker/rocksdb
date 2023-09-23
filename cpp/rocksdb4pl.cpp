@@ -34,16 +34,14 @@
 */
 
 #include <cassert>
-#include <mutex>
 #include <rocksdb/db.h>
 #include <rocksdb/env.h>
 #include <rocksdb/write_batch.h>
 #include <rocksdb/merge_operator.h>
 #include <rocksdb/statistics.h>
 #define PL_ARITY_AS_SIZE 1
-#include <SWI-Stream.h>
-#include <SWI-Prolog.h>
 #include <SWI-cpp2.h>
+#include <SWI-cpp2-atommap.h>
 
 #include <SWI-cpp2.cpp> // This could be put in a separate file
 
@@ -52,148 +50,8 @@ struct dbref;
 static bool ok(const rocksdb::Status& status, const dbref *ref);
 static void ok_or_throw_fail(const rocksdb::Status& status, const dbref *ref);
 
+static AtomMap<PlAtom, PlAtom> rocksdb4_alias("alias", "rocksdb");
 
-		 /*******************************
-		 *	      ALIAS		*
-		 *******************************/
-
-// The AtomMap class is a wrapper around a std::map, mapping
-// alias names to blobs. The blobs are of typ PlAtom, so this is
-// actually an atom->atom map.
-// The entries are protected by a mutex, so the operations are thread-safe.
-// The operations do appropriate calls to register and unregister the atoms/blobs.
-//
-// The operations are:
-//   PlAtom find(PlAtom name) - look up, returning PlAtom::null if not found
-//   void insert(PlAtom name, PlAtom symbol) - insert, throwing a
-//                              PlPermissionError if it's already there
-//   void erase(PlAtom name) - remove the entry (no error if it's already been removed)
-
-
-template <typename ValueType, typename StoredValueType>
-class AtomMap
-{
-public:
-  explicit AtomMap() { };
-  AtomMap(const AtomMap&) = delete;
-  AtomMap(const AtomMap&&) = delete;
-  AtomMap& operator =(const AtomMap&) = delete;
-  AtomMap& operator =(const AtomMap&&) = delete;
-  ~AtomMap() = default;
-
-  [[nodiscard]]
-  ValueType
-  find(PlAtom key)
-  { std::lock_guard<std::mutex> alias_lock_(alias_lock);
-    return find_inside_lock(key);
-  }
-
-  void
-  insert(PlAtom key, ValueType value)
-  { std::lock_guard<std::mutex> alias_lock_(alias_lock);
-    insert_inside_lock(key, value);
-  }
-
-  void
-  erase(PlAtom key)
-  { std::lock_guard<std::mutex> alias_lock_(alias_lock);
-    erase_inside_lock(key);
-  }
-
-private:
-  [[nodiscard]]
-  ValueType
-  find_inside_lock(PlAtom key)
-  { const auto lookup = alias_entries.find(key.C_);
-    ValueType value(ValueType::null);
-    if ( lookup != alias_entries.end() )
-      stored_value_to_value(lookup->second, &value);
-    return value;
-  }
-
-  void
-  insert_inside_lock(PlAtom key, ValueType value)
-  { const auto lookup = find_inside_lock(key);
-    if ( lookup.is_null() )
-    { StoredValueType stored_value(StoredValueType::null);
-      register_value(value, &stored_value);
-      key.register_ref();
-      alias_entries.insert(std::make_pair(key.C_, stored_value));
-    } else if ( lookup != value )
-    { throw PlPermissionError("alias", "rocksdb", PlTerm_atom(key));
-    }
-  }
-
-  void
-  erase_inside_lock(PlAtom key)
-  { auto lookup = alias_entries.find(key.C_);
-    if ( lookup == alias_entries.end() )
-      return;
-    // TODO: As an alternative to removing the entry, leave it in place
-    //       (with db==nullptr showing that it's been closed; or with
-    //       the value as PlAtom::null), so that rocks_close/1 can
-    //       distinguish an alias lookup that should throw a
-    //       PlExistenceError because it's never been opened.
-    key.unregister_ref();
-    unregister_stored_value(&lookup->second);
-    alias_entries.erase(lookup);
-  }
-
-  // Implementation for map<PlAtom,PlAtom>
-
-  static void
-  register_value(const PlAtom &value, PlAtom *stored_value)
-  { *stored_value = value;
-    stored_value->register_ref();
-  }
-
-  static void
-  stored_value_to_value(const PlAtom &stored_value, PlAtom *value)
-  { *value = stored_value;
-  }
-
-  static void
-  unregister_stored_value(PlAtom *stored_value)
-  { stored_value->unregister_ref();
-  }
-
-  // Implementation for map<PlAtom,PlRecord> (external: PlAtom,PlTerm>)
-
-  static void
-  register_value(const PlTerm &value, PlRecord *stored_value)
-  { *stored_value = value.record();
-  }
-
-  static void
-  stored_value_to_value(const PlRecord &stored_value, PlTerm *value)
-  { PlCheckFail(value->unify_term(stored_value.term()));
-  }
-
-  static void
-  unregister_stored_value(PlRecord *stored_value)
-  { stored_value->erase();
-  }
-
-  // Data - mutex + map
-
-  std::mutex alias_lock;
-  // TODO: Define the necessary operators for PlAtom, so that it can be
-  //       the key instead of atom_t.
-  std::map<atom_t, StoredValueType> alias_entries;
-};
-
-// global
-AtomMap<PlAtom, PlAtom> rocksdb4_alias;
-
-// For testing:
-//
-// AtomMap<PlTerm, PlRecord> unused_map_atom_to_term;
-//
-// void unused_test_atom_to_term()
-// { unused_map_atom_to_term.insert(PlAtom("foo"), PlTerm_atom("bar"));
-//   PlTerm t = unused_map_atom_to_term.find(PlAtom("foo"));
-//   unused_map_atom_to_term.erase(PlAtom("zot"));
-// }
 
 		 /*******************************
 		 *	       SYMBOL		*
