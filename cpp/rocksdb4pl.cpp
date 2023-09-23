@@ -50,7 +50,7 @@ struct dbref;
 static bool ok(const rocksdb::Status& status, const dbref *ref);
 static void ok_or_throw_fail(const rocksdb::Status& status, const dbref *ref);
 
-static AtomMap<PlAtom, PlAtom> rocksdb4_alias("alias", "rocksdb");
+static AtomMap<PlAtom, PlAtom> rocksdb_alias("alias", "rocksdb");
 
 
 		 /*******************************
@@ -168,7 +168,7 @@ struct dbref : public PlBlob
       pathname.reset();
     }
     if ( name.not_null() )
-    { rocksdb4_alias.erase(name);
+    { rocksdb_alias.erase(name);
       name.unregister_ref();
       name.reset();
     }
@@ -198,7 +198,7 @@ get_rocks(PlTerm t, bool throw_if_closed=true)
 
   auto ref = PlBlobV<dbref>::cast(a);
   if ( !ref )
-  { a = rocksdb4_alias.find(a);
+  { a = rocksdb_alias.find(a);
     if ( a.not_null() )
       ref = PlBlobV<dbref>::cast(a);
   }
@@ -1165,7 +1165,7 @@ PREDICATE(rocks_open_, 3)
   }
 
   if ( alias.not_null() )
-  { const auto existing = rocksdb4_alias.find(alias);
+  { const auto existing = rocksdb_alias.find(alias);
     if ( existing.not_null() )
       throw PlPermissionError("alias", "rocksdb", PlTerm_atom(alias));
   }
@@ -1204,7 +1204,7 @@ PREDICATE(rocks_open_, 3)
   { PlTerm_var tmp;
     std::unique_ptr<PlBlob> refb(ref.release());
     PlCheckFail(tmp.unify_blob(&refb));
-    rocksdb4_alias.insert(alias, tmp.as_atom());
+    rocksdb_alias.insert(alias, tmp.as_atom());
     PlCheckFail(A2.unify_atom(alias));
   }
   return true;
@@ -1221,7 +1221,7 @@ PREDICATE(rocks_close, 1)
 
 
 PREDICATE(rocks_alias_lookup, 2)
-{ PlAtom a(rocksdb4_alias.find(A1.as_atom()));
+{ PlAtom a(rocksdb_alias.find(A1.as_atom()));
   if ( a.not_null() )
     return A2.unify_atom(a);
   return false;
