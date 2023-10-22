@@ -43,9 +43,6 @@
 #include <SWI-cpp2.h>
 #include <SWI-cpp2-atommap.h>
 
-#include <SWI-cpp2.cpp> // This could be put in a separate file
-
-
 struct dbref;
 static bool ok(const rocksdb::Status& status, const dbref *ref);
 static void ok_or_throw_fail(const rocksdb::Status& status, const dbref *ref);
@@ -119,7 +116,7 @@ struct dbref : public PlBlob
   PL_BLOB_SIZE
 
   bool write_fields(IOSTREAM *s, int flags) const override
-  { if ( ! debug )
+  { if ( ! debug ) // TODO: wrap with #if !O_DEBUG
       return true;
     if ( !pathname_s.empty() )
       if ( Sfprintf(s, ",path=%s", pathname_s.c_str()) < 0 )
@@ -360,7 +357,7 @@ unify(PlTerm t, const rocksdb::Slice& s, blob_type type)
     }
     case BLOB_TERM:
     { PlTerm_var tmp;
-      Plx_recorded_external(s.data_, tmp.C_);
+      Plx_recorded_external(s.data_, tmp.unwrap());
       return tmp.unify_term(t);
     }
     default:
@@ -422,28 +419,28 @@ unify_value(PlTerm t, const rocksdb::Slice& s, merger_t merge, blob_type type)
       { int i;
 	memcpy(&i, data, sizeof i);
 	data += sizeof i;
-	Plx_put_integer(tmp.C_, i);
+	Plx_put_integer(tmp.unwrap(), i);
       }
       break;
       case BLOB_INT64:
       { int64_t i;
 	memcpy(&i, data, sizeof i);
 	data += sizeof i;
-	Plx_put_int64(tmp.C_, i);
+	Plx_put_int64(tmp.unwrap(), i);
       }
       break;
       case BLOB_FLOAT32:
       { float i;
 	memcpy(&i, data, sizeof i);
 	data += sizeof i;
-	Plx_put_float(tmp.C_, i);
+	Plx_put_float(tmp.unwrap(), i);
       }
       break;
       case BLOB_FLOAT64:
       { double i;
 	memcpy(&i, data, sizeof i);
 	data += sizeof i;
-	Plx_put_float(tmp.C_, i);
+	Plx_put_float(tmp.unwrap(), i);
       }
       break;
       default:
@@ -556,7 +553,7 @@ public:
     static const PlAtom ATOM_full("full");
 
     for (const auto& value : operand_list)
-    { Plx_put_variable(tmp.C_);
+    { Plx_put_variable(tmp.unwrap());
       if ( !unify(tmp, value, type.value) ||
 	   !list.append(tmp) )
 	return false;
@@ -1130,7 +1127,7 @@ PREDICATE(rocks_open_, 3)
   static const PlAtom ATOM_read_only("read_only");
   static const PlAtom ATOM_debug("debug");
 
-  PlCheckFail(Plx_get_file_name(A1.C_, &fn, PL_FILE_OSPATH));
+  PlCheckFail(Plx_get_file_name(A1.unwrap(), &fn, PL_FILE_OSPATH));
   PlTerm_tail tail(A3);
   PlTerm_var opt;
   while ( tail.next(opt) )
