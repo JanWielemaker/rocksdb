@@ -3,12 +3,12 @@
 # For development, specify the following:
 # ADDED_CPP_FLAGS= -Wsign-compare -Wshadow -Wunused-parameter -Woverloaded-virtual -Wnon-virtual-dtor -Wno-invalid-offsetof -Wconversion -Warith-conversion -Wsign-conversion -Wfloat-conversion -Wno-unused-parameter -Wno-missing-field-initializers
 
-CPPFLAGS=-Wall $(ADDED_CPPFLAGS) -std=c++17 -O2 $(CFLAGS) $(COFLAGS) $(LDSOFLAGS) -Irocksdb/include
+CPPFLAGS=-Wall $(ADDED_CPPFLAGS) -std=c++17 -O2 $(SWIPL_CFLAGS) $(COFLAGS) $(SWIPL_MODULE_LDFLAGS) -Irocksdb/include
 LIBROCKSDB=rocksdb/librocksdb.a
 ROCKSENV=ROCKSDB_DISABLE_JEMALLOC=1 ROCKSDB_DISABLE_TCMALLOC=1
 # DEBUG_LEVEL=0 implies -O2 without assertions and debug code
 ROCKSCFLAGS=EXTRA_CXXFLAGS=-fPIC EXTRA_CFLAGS=-fPIC USE_RTTI=1 DEBUG_LEVEL=0
-PLPATHS=-p library=prolog -p foreign="$(PACKSODIR)"
+PLPATHS=-p library=prolog -p foreign="$(SWIPL_MODULE_DIR)"
 SWIPL ?= swipl
 SUBMODULE_UPDATE ?= git submodule update --init rocksdb
 
@@ -31,26 +31,24 @@ rocksdb/librocksdb.a: rocksdb/INSTALL.md FORCE
 plugin:	$(LIBROCKSDB)
 	$(MAKE) shared_object
 
-shared_object: $(PACKSODIR)/rocksdb4pl.$(SOEXT)
+shared_object: $(SWIPL_MODULE_DIR)/rocksdb4pl.$(SWIPL_MODULE_EXT)
 
-$(PACKSODIR)/rocksdb4pl.$(SOEXT): cpp/rocksdb4pl.cpp $(LIBROCKSDB) Makefile
-	mkdir -p $(PACKSODIR)
+$(SWIPL_MODULE_DIR)/rocksdb4pl.$(SWIPL_MODULE_EXT): cpp/rocksdb4pl.cpp $(LIBROCKSDB) Makefile
+	mkdir -p $(SWIPL_MODULE_DIR)
 	$(CXX) --version
-	@# For development:
-	@#   PACKSODIR=/tmp/rocksdb-so
-	@#   SOEXT=so
-	@#   CFLAGS='-fPIC -pthread -I$$HOME/src/swipl-devel/src -I$$HOME/src/swipl-devel/src/os -I$$HOME/src/swipl-devel/packages/cpp'
-	@# other flags: CPPFLAGS $(CPPFLAGS) LIBROCKSDB $(LIBROCKSDB) PLATFORM_LDFLAGS $(PLATFORM_LDFLAGS)
-	@#              SWISOLIB $(SWISOLIB) CFLAGS$(CFLAGS) COFLAGS $(COFLAGS) LDSOFLAGS$(LDSOFLAGS)
-	$(CXX) $(CPPFLAGS) -shared -o $@ cpp/rocksdb4pl.cpp $(LIBROCKSDB) $(PLATFORM_LDFLAGS) $(SWISOLIB)
+	$(CXX) $(CPPFLAGS) -shared -o $@ cpp/rocksdb4pl.cpp $(LIBROCKSDB) $(PLATFORM_LDFLAGS) $(SWIPL_MODULE_LIB)
 
 install::
+
+check::
+	@# TODO: determine which tests to run
+	@# $(ROCKSENV) $(MAKE) $(JOBS) -C rocksdb tests
 
 check::
 	$(SWIPL) $(PLPATHS) -g test_rocksdb -t halt test/test_rocksdb.pl
 
 distclean: clean
-	rm -f $(PACKSODIR)/rocksdb4pl.$(SOEXT)
+	rm -f $(SWIPL_MODULE_DIR)/rocksdb4pl.$(SWIPL_MODULE_EXT)
 
 clean:
 	rm -f *~
