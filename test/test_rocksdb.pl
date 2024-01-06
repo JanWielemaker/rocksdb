@@ -335,7 +335,7 @@ test(basic, [cleanup(delete_db)]) :-
 :- begin_tests(enum, [cleanup(delete_db)]).
 
 test(enum,
-     [ Keys == ["aap", "aapje", "noot"],
+     [ Pairs == ["aap"-1, "aapje"-2, "noot"-3],
        cleanup(delete_db)
      ]) :-
 	test_db(Dir),
@@ -346,11 +346,45 @@ test(enum,
 	rocks_put(RocksDB, aap, 1),
 	rocks_put(RocksDB, aapje, 2),
 	rocks_put(RocksDB, noot, 3),
-	findall(Key, rocks_enum_from(RocksDB, Key, _, aap), Keys),
+	findall(Key-Value, rocks_enum_from(RocksDB, Key, Value, aap), Pairs),
 	rocks_enum_prefix(RocksDB, Rest, _, aapj),
 	assertion(Rest == "e"),
 	rocks_close(RocksDB),   % test double-close
         rocks_close(RocksDB).
+
+test(enum,
+     [ [Key1-Value1,Key2-Value2] == ["aap"-1, "aap"-1],
+       cleanup(delete_db)
+     ]) :-
+    test_db(Dir),
+    rocks_open(Dir, RocksDB,
+               [ key(string),
+                 value(term)
+               ]),
+    rocks_put(RocksDB, aap, 1),
+    rocks_put(RocksDB, aapje, 2),
+    rocks_put(RocksDB, noot, 3),
+    rocks_enum(RocksDB, Key1, Value1),
+    rocks_enum(RocksDB, Key2, Value2),
+    !,                          % exercise the "prune" case
+    rocks_close(RocksDB).
+
+test(enum,
+     [ Key-Value == "aapje"-2,
+       cleanup(delete_db)
+     ]) :-
+    test_db(Dir),
+    rocks_open(Dir, RocksDB,
+               [ key(string),
+                 value(term)
+               ]),
+    rocks_put(RocksDB, aap, 1),
+    rocks_put(RocksDB, aapje, 2),
+    rocks_put(RocksDB, noot, 3),
+    rocks_enum(RocksDB, Key, Value),
+    Key \= "aap",               % skip the 1st result
+    !,                          % exercise the "prune" case
+    rocks_close(RocksDB).
 
 :- end_tests(enum).
 

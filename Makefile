@@ -3,11 +3,13 @@
 # For development, specify the following:
 # ADDED_CPP_FLAGS= -Wsign-compare -Wshadow -Wunused-parameter -Woverloaded-virtual -Wnon-virtual-dtor -Wno-invalid-offsetof -Wconversion -Warith-conversion -Wsign-conversion -Wfloat-conversion -Wno-unused-parameter -Wno-missing-field-initializers
 
-CPPFLAGS=-Wall $(ADDED_CPPFLAGS) -std=c++17 -O2 $(SWIPL_CFLAGS) $(COFLAGS) $(SWIPL_MODULE_LDFLAGS) -Irocksdb/include
+#  -O0 -gdwarf-2 -g3 -fsanitize=address -fno-omit-frame-pointer
+
+CPPFLAGS=-Wall $(ADDED_CPPFLAGS) -std=c++17 -O2 -gdwarf-2 -g3 $(SWIPL_CFLAGS) $(COFLAGS) $(SWIPL_MODULE_LDFLAGS) -Irocksdb/include
 LIBROCKSDB=rocksdb/librocksdb.a
 ROCKSENV=ROCKSDB_DISABLE_JEMALLOC=1 ROCKSDB_DISABLE_TCMALLOC=1
 # DEBUG_LEVEL=0 implies -O2 without assertions and debug code
-ROCKSCFLAGS=EXTRA_CXXFLAGS=-fPIC EXTRA_CFLAGS=-fPIC USE_RTTI=1 DEBUG_LEVEL=0
+ROCKSCFLAGS=EXTRA_CXXFLAGS="-fPIC" EXTRA_CFLAGS="-fPIC" USE_RTTI=1 DEBUG_LEVEL=0
 PLPATHS=-p library=prolog -p foreign="$(SWIPL_MODULE_DIR)"
 SWIPL ?= swipl
 SUBMODULE_UPDATE ?= git submodule update --init rocksdb
