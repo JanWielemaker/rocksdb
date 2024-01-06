@@ -34,6 +34,7 @@
 */
 
 #include <cassert>
+#include <mutex>
 #include <rocksdb/db.h>
 #include <rocksdb/env.h>
 #include <rocksdb/write_batch.h>
@@ -99,6 +100,8 @@ static PL_blob_t rocks_blob = PL_BLOB_DEFINITION(dbref, "rocksdb");
 struct dbref : public PlBlob
 {
   rocksdb::DB	*db = nullptr;			    // DB handle
+  int            refcount = 0;                      // used by iterators
+  std::mutex     refcount_lock;                     // mutex for refcount
   PlAtom	 pathname = PlAtom(PlAtom::null);   // DB's absolute file name
   PlAtom	 name     = PlAtom(PlAtom::null);   // alias name (can be PlAtom::null)
   std::string    pathname_s;
@@ -112,6 +115,11 @@ struct dbref : public PlBlob
 
   explicit dbref() :
     PlBlob(&rocks_blob) { }
+
+  dbref(const dbref&) = delete;
+  dbref(dbref&&) = delete;
+  dbref& operator =(const dbref&) = delete;
+  dbref& operator =(dbref&&) = delete;
 
   PL_BLOB_SIZE
 
@@ -154,11 +162,29 @@ struct dbref : public PlBlob
     }
   }
 
+  void incr_ref()
+  { std::lock_guard<std::mutex> lock_(refcount_lock);
+    refcount++;
+    register_ref();
+  }
+
+  void decr_ref()
+  { std::lock_guard<std::mutex> lock_(refcount_lock);
+    refcount--;
+    unregister_ref();
+  }
+
   bool close() noexcept
   { bool rc = true;
+    std::lock_guard<std::mutex> lock_(refcount_lock);
     if ( db )
-    { rc = ok(db->Close(), this);
-      db = nullptr;
+    { if ( refcount == 0 )
+      { rc = ok(db->Close(), this);
+        db = nullptr;
+      } else
+      { Sdprintf("*** ERROR: Close rocksdb refcount=%d: %s\n", refcount, pathname_s.c_str()); // Can't use PL_warning()
+        return false;
+      }
     }
     if ( pathname.not_null() )
     { pathname.unregister_ref();
@@ -176,9 +202,14 @@ struct dbref : public PlBlob
     return rc;
   }
 
+  bool pre_delete() override
+  { return close();
+  }
+
   ~dbref()
-  { if ( !close() )
-      Sdprintf("*** ERROR: Close rocksdb failed: %s\n", pathname_s.c_str()); // Can't use PL_warning()
+  { if ( close() )
+      return;
+    Sdprintf("*** ERROR: Close rocksdb failed: %s\n", pathname_s.c_str()); // Can't use PL_warning() or throw
   }
 };
 
@@ -1326,11 +1357,18 @@ enum enum_type
   ENUM_PREFIX
 };
 
-struct enum_state
+class enum_state
 {
+public:
   enum_state(dbref *_ref)
     : ref(_ref), type(ENUM_NOT_INITIALIZED)
-  { }
+  { ref->incr_ref();
+  }
+
+  ~enum_state()
+  { ref->decr_ref();
+  }
+
   std::unique_ptr<rocksdb::Iterator> it;
   dbref    *ref;
   enum_type type;
@@ -1371,11 +1409,15 @@ enum_key_prefix(const enum_state& state)
 
 [[nodiscard]]
 static foreign_t
-rocks_enum(PlTermv PL_av, int ac, enum_type type, PlControl handle, rocksdb::ReadOptions options)
-{ auto state = handle.context_unique_ptr<enum_state>();
-
-  switch ( handle.foreign_control() )
-  { case PL_FIRST_CALL:
+rocks_enum(PlTermv PL_av, int ac, enum_type type, PlControl handle, PlTerm options_term)
+{ // "state" must be acquired so that automatic cleaup deletes it
+  auto state = handle.context_unique_ptr<enum_state>();
+  const auto control = handle.foreign_control();
+  if ( control == PL_PRUNED )
+    return true;
+  else
+  { if ( control == PL_FIRST_CALL )
+    { auto options = read_options(options_term);
       state.reset(new enum_state(get_rocks(A1)));
       if ( ac >= 4 )
       { if ( !(state->ref->type.key == BLOB_ATOM ||
@@ -1395,9 +1437,12 @@ rocks_enum(PlTermv PL_av, int ac, enum_type type, PlControl handle, rocksdb::Rea
 	state->it->SeekToFirst();
       }
       state->type = type;
-      [[fallthrough]];
-    case PL_REDO:
-    { PlFrame fr;
+    } else
+    { assert(control == PL_REDO);
+    }
+
+    { // PL_FIRST_CALL, PL_REDO
+      PlFrame fr;
       for ( ; state->it->Valid(); state->it->Next() )
       { if ( unify_enum_key(A2, *state) &&
 	     unify_value(A3, state->it->value(),
@@ -1411,30 +1456,24 @@ rocks_enum(PlTermv PL_av, int ac, enum_type type, PlControl handle, rocksdb::Rea
 	}
 	fr.rewind();
       }
-      return false;
     }
-    case PL_PRUNED:
-      return true;
-    default:
-      assert(0);
-      return false;
   }
   return false;
 }
 
 
 PREDICATE_NONDET(rocks_enum, 4)
-{ return rocks_enum(PL_av, 3, ENUM_ALL, handle, read_options(A4));
+{ return rocks_enum(PL_av, 3, ENUM_ALL, handle, A4);
 }
 
 
 PREDICATE_NONDET(rocks_enum_from, 5)
-{ return rocks_enum(PL_av, 4, ENUM_FROM, handle, read_options(A5));
+{ return rocks_enum(PL_av, 4, ENUM_FROM, handle, A5);
 }
 
 
 PREDICATE_NONDET(rocks_enum_prefix, 5)
-{ return rocks_enum(PL_av, 4, ENUM_PREFIX, handle, read_options(A5));
+{ return rocks_enum(PL_av, 4, ENUM_PREFIX, handle, A5);
 }
 
 

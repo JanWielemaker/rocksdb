@@ -320,6 +320,12 @@ is_meta(merge).
 %	succeeds; if it's an alias name that's already been closed, an
 %	existence error is raised (this behavior may change in
 %	future).
+%
+%	If you call rocks_close/1 while there is an iterator open
+%	(e.g., from rocks_enum/3 that still has a choicepoint), the
+%	results are unpredicatable. The code attempts to avoid crashes
+%	by reference counting iterators and only allowing a close if
+%	there are no active iterators for a database.
 
 
 %!	rocks_alias_lookup(+Name, -RocksDB) is semidet.
