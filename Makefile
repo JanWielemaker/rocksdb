@@ -1,11 +1,16 @@
-#COFLAGS=-gdwarf-2 -g3
-
 # For development, specify the following:
 # ADDED_CPP_FLAGS= -Wsign-compare -Wshadow -Wunused-parameter -Woverloaded-virtual -Wnon-virtual-dtor -Wno-invalid-offsetof -Wconversion -Warith-conversion -Wsign-conversion -Wfloat-conversion -Wno-unused-parameter -Wno-missing-field-initializers
 
+# For debugging:
 #  -O0 -gdwarf-2 -g3 -fsanitize=address -fno-omit-frame-pointer
 
-CPPFLAGS=-Wall $(ADDED_CPPFLAGS) -std=c++17 -O2 -gdwarf-2 -g3 $(SWIPL_CFLAGS) $(COFLAGS) $(SWIPL_MODULE_LDFLAGS) -Irocksdb/include
+# To build/test:
+#   cd $SRC/rocksdb
+#   swipl pack install .
+# and thereafter:
+#   (cd $SRC/rocksdb && source buildenv.sh && make && make check)
+
+CPPFLAGS=-Wall $(ADDED_CPPFLAGS) -std=c++17 -O2 -gdwarf-2 -g3 $(SWIPL_CFLAGS) $(SWIPL_MODULE_LDFLAGS) -Irocksdb/include
 LIBROCKSDB=rocksdb/librocksdb.a
 ROCKSENV=ROCKSDB_DISABLE_JEMALLOC=1 ROCKSDB_DISABLE_TCMALLOC=1
 # DEBUG_LEVEL=0 implies -O2 without assertions and debug code
@@ -27,7 +32,7 @@ rocksdb/INSTALL.md: FORCE
 # Run the build for librocksdb in parallel, using # processors as
 # limit, if using GNU make
 JOBS=$(shell $(MAKE) --version 2>/dev/null | grep GNU >/dev/null && J=$$(nproc 2>/dev/null) && echo -j$$J)
-rocksdb/librocksdb.a: rocksdb/INSTALL.md FORCE
+$(LIBROCKSDB): rocksdb/INSTALL.md FORCE
 	$(ROCKSENV) $(MAKE) $(JOBS) -C rocksdb static_lib $(ROCKSCFLAGS)
 
 plugin:	$(LIBROCKSDB)
