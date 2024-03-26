@@ -1,0 +1,4 @@
+# Does nothing, but triggers creation of buildenv.sh
+
+# TODO: git submoduleupdate --init rocksdb
+#       (and remove from Makefile)
