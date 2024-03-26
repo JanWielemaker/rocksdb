@@ -1,6 +1,6 @@
 name(rocksdb).
 title('SWI-Prolog interface to RocksDB').
-version('0.14.0').
+version('0.14.1').
 % prolog_version('9.3.1').
 pack_version(2).
 keywords([database, embedded, nosql, 'RocksDB']).
