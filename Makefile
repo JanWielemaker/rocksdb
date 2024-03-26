@@ -14,7 +14,7 @@ CPPFLAGS=-Wall $(ADDED_CPPFLAGS) -std=c++17 -O2 -gdwarf-2 -g3 $(SWIPL_CFLAGS) $(
 LIBROCKSDB=rocksdb/librocksdb.a
 ROCKSENV=ROCKSDB_DISABLE_JEMALLOC=1 ROCKSDB_DISABLE_TCMALLOC=1
 # DEBUG_LEVEL=0 implies -O2 without assertions and debug code
-ROCKSCFLAGS=EXTRA_CXXFLAGS="-fPIC" EXTRA_CFLAGS="-fPIC" USE_RTTI=1 DEBUG_LEVEL=0
+ROCKSCFLAGS=EXTRA_CXXFLAGS="-fPIC -Wall -O2 -gdwarf-2 -g3" EXTRA_CFLAGS="-fPIC -Wall -O2 -gdwarf-2 -g3" USE_RTTI=1 DEBUG_LEVEL=0
 PLPATHS=-p library=prolog -p foreign="$(SWIPL_MODULE_DIR)"
 SWIPL ?= swipl
 SUBMODULE_UPDATE ?= git submodule update --init rocksdb
