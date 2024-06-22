@@ -361,36 +361,33 @@ static bool
 unify(PlTerm t, const rocksdb::Slice& s, blob_type type)
 { switch ( type )
   { case BLOB_ATOM:
-      return t.unify_chars(PL_ATOM|REP_UTF8, s.size_, s.data_);
+      return t.unify_chars(PL_ATOM|REP_UTF8, s.size(), s.data());
     case BLOB_STRING:
-      return t.unify_chars(PL_STRING|REP_UTF8, s.size_, s.data_);
+      return t.unify_chars(PL_STRING|REP_UTF8, s.size(), s.data());
     case BLOB_BINARY:
-      return t.unify_chars(PL_STRING|REP_ISO_LATIN_1, s.size_, s.data_);
+      return t.unify_chars(PL_STRING|REP_ISO_LATIN_1, s.size(), s.data());
     case BLOB_INT32:
     { int i;
-      memcpy(&i, s.data_, sizeof i); // Unaligned i=*reinterpret_cast<int>(s.data_)
+      memcpy(&i, s.data(), sizeof i); // Unaligned i=*reinterpret_cast<int>(s.data())
       return t.unify_integer(i);
     }
     case BLOB_INT64:
     { int64_t i;
-      memcpy(&i, s.data_, sizeof i);
+      memcpy(&i, s.data(), sizeof i);
       return t.unify_integer(i);
     }
     case BLOB_FLOAT32:
     { float f;
-      memcpy(&f, s.data_, sizeof f);
+      memcpy(&f, s.data(), sizeof f);
       return t.unify_float(f);
     }
     case BLOB_FLOAT64:
     { double f;
-      memcpy(&f, s.data_, sizeof f);
+      memcpy(&f, s.data(), sizeof f);
       return t.unify_float(f);
     }
     case BLOB_TERM:
-    { PlTerm_var tmp;
-      Plx_recorded_external(s.data_, tmp.unwrap());
-      return tmp.unify_term(t);
-    }
+      return t.unify_term(PlRecordExternalCopy::term(s.data()));
     default:
       assert(0);
       return false;
@@ -450,28 +447,28 @@ unify_value(PlTerm t, const rocksdb::Slice& s, merger_t merge, blob_type type)
       { int i;
 	memcpy(&i, data, sizeof i);
 	data += sizeof i;
-	Plx_put_integer(tmp.unwrap(), i);
+	tmp.put_integer(i);
       }
       break;
       case BLOB_INT64:
       { int64_t i;
 	memcpy(&i, data, sizeof i);
 	data += sizeof i;
-	Plx_put_int64(tmp.unwrap(), i);
+	tmp.put_int64(i);
       }
       break;
       case BLOB_FLOAT32:
       { float i;
 	memcpy(&i, data, sizeof i);
 	data += sizeof i;
-	Plx_put_float(tmp.unwrap(), i);
+	tmp.put_float(i);
       }
       break;
       case BLOB_FLOAT64:
       { double i;
 	memcpy(&i, data, sizeof i);
 	data += sizeof i;
-	Plx_put_float(tmp.unwrap(), i);
+	tmp.put_float(i);
       }
       break;
       default:
@@ -584,7 +581,7 @@ public:
     static const PlAtom ATOM_full("full");
 
     for (const auto& value : operand_list)
-    { Plx_put_variable(tmp.unwrap());
+    { tmp.put_variable();
       if ( !unify(tmp, value, type.value) ||
 	   !list.append(tmp) )
 	return false;
@@ -1158,7 +1155,7 @@ PREDICATE(rocks_open_, 3)
   static const PlAtom ATOM_read_only("read_only");
   static const PlAtom ATOM_debug("debug");
 
-  PlCheckFail(Plx_get_file_name(A1.unwrap(), &fn, PL_FILE_OSPATH));
+  PlCheckFail(A1.get_file_name(&fn, PL_FILE_OSPATH));
   PlTerm_tail tail(A3);
   PlTerm_var opt;
   while ( tail.next(opt) )
@@ -1380,12 +1377,8 @@ static bool
 unify_enum_key(PlTerm t, const enum_state& state)
 { if ( state.type == ENUM_PREFIX )
   { rocksdb::Slice k(state.it->key());
-
-    if ( k.size_ >= state.prefix.length() &&
-	 memcmp(k.data_, state.prefix.data(), state.prefix.length()) == 0 )
-    { k.data_ += state.prefix.length();
-      k.size_ -= state.prefix.length();
-
+    if ( k.starts_with(state.prefix) )
+    { k.remove_prefix(state.prefix.length());
       return unify(t, k, state.ref->type.key);
     } else
       return false;
@@ -1400,8 +1393,7 @@ static bool
 enum_key_prefix(const enum_state& state)
 { if ( state.type == ENUM_PREFIX )
   { rocksdb::Slice k(state.it->key());
-    return ( k.size_ >= state.prefix.length() &&
-	     memcmp(k.data_, state.prefix.data(), state.prefix.length()) == 0 );
+    return k.starts_with(state.prefix);
   } else
     return true;
 }
