@@ -14,7 +14,7 @@ CPPFLAGS=-Wall $(ADDED_CPPFLAGS) -std=c++17 -O2 -gdwarf-2 -g3 $(SWIPL_CFLAGS) $(
 LIBROCKSDB=rocksdb/librocksdb.a
 ROCKSENV=ROCKSDB_DISABLE_JEMALLOC=1 ROCKSDB_DISABLE_TCMALLOC=1
 # DEBUG_LEVEL=0 implies -O2 without assertions and debug code
-ROCKSCFLAGS=EXTRA_CXXFLAGS="-fPIC -Wall -O2 -gdwarf-2 -g3" EXTRA_CFLAGS="-fPIC -Wall -O2 -gdwarf-2 -g3" USE_RTTI=1 DEBUG_LEVEL=0
+ROCKSCFLAGS=CXX=$(SWIPL_CXX) EXTRA_CXXFLAGS="-fPIC -Wall -O2 -gdwarf-2 -g3" EXTRA_CFLAGS="-fPIC -Wall -O2 -gdwarf-2 -g3" USE_RTTI=1 DEBUG_LEVEL=0
 PLPATHS=-p library=prolog -p foreign="$(SWIPL_MODULE_DIR)"
 SWIPL ?= swipl
 SUBMODULE_UPDATE ?= git submodule update --init rocksdb
@@ -42,8 +42,8 @@ shared_object: $(SWIPL_MODULE_DIR)/rocksdb4pl.$(SWIPL_MODULE_EXT)
 
 $(SWIPL_MODULE_DIR)/rocksdb4pl.$(SWIPL_MODULE_EXT): cpp/rocksdb4pl.cpp $(LIBROCKSDB) Makefile
 	mkdir -p $(SWIPL_MODULE_DIR)
-	$(CXX) --version
-	$(CXX) $(CPPFLAGS) -shared -o $@ cpp/rocksdb4pl.cpp $(LIBROCKSDB) $(PLATFORM_LDFLAGS) $(SWIPL_MODULE_LIB)
+	$(SWIPL_CXX) --version
+	$(SWIPL_CXX) $(CPPFLAGS) -shared -o $@ cpp/rocksdb4pl.cpp $(LIBROCKSDB) $(PLATFORM_LDFLAGS) $(SWIPL_MODULE_LIB)
 
 install::
 
