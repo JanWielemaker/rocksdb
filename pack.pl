@@ -1,7 +1,8 @@
 name(rocksdb).
 title('SWI-Prolog interface to RocksDB').
-version('0.14.2').
-% prolog_version('9.3.6').
+version('0.14.4').
+% requires(prolog >= "9.3.12").
+requires(prolog:c_cxx(_)).
 pack_version(2).
 keywords([database, embedded, nosql, 'RocksDB']).
 author('Jan Wielemaker', 'jan@swi-prolog.org').
