@@ -1377,13 +1377,8 @@ static bool
 unify_enum_key(PlTerm t, const enum_state& state)
 { if ( state.type == ENUM_PREFIX )
   { rocksdb::Slice k(state.it->key());
-
-    // TODO: k.size_, k.data_ are "private":
-    if ( k.size_ >= state.prefix.length() &&
-	 memcmp(k.data_, state.prefix.data(), state.prefix.length()) == 0 )
-    { k.data_ += state.prefix.length();
-      k.size_ -= state.prefix.length();
-
+    if ( k.starts_with(state.prefix) )
+    { k.remove_prefix(state.prefix.length());
       return unify(t, k, state.ref->type.key);
     } else
       return false;
@@ -1398,8 +1393,7 @@ static bool
 enum_key_prefix(const enum_state& state)
 { if ( state.type == ENUM_PREFIX )
   { rocksdb::Slice k(state.it->key());
-    return ( k.size() >= state.prefix.length() &&
-	     memcmp(k.data(), state.prefix.data(), state.prefix.length()) == 0 );
+    return k.starts_with(state.prefix);
   } else
     return true;
 }
