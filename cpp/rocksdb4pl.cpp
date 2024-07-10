@@ -293,11 +293,11 @@ template<typename T>
 class PlSliceNumber : public PlSlice
 {
 public:
-  explicit PlSliceNumber<T>(T v)
+  explicit PlSliceNumber(T v)
     : PlSlice(reinterpret_cast<const char *>(&v_), sizeof v_),
       v_(v) { }
 
-  virtual ~PlSliceNumber<T>() = default;
+  virtual ~PlSliceNumber() = default;
 
 protected:
   T v_; // backing store for rocksdb::slice
