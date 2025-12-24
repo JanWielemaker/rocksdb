@@ -1040,8 +1040,9 @@ lookup_open_optdef_and_apply(rocksdb::Options *options,
       //          o->new_table_reader_for_compaction_inputs  = arg.as_bool(); } ),
       OpenOptdef("compaction_readahead_size",               ODEF {
 	       o->compaction_readahead_size               = arg.as_size_t(); } ),
-      OpenOptdef("random_access_max_buffer_size",           ODEF {
-	       o->random_access_max_buffer_size           = arg.as_size_t(); } ),
+      // DEPRECATED in RocksDB 10.x: random_access_max_buffer_size removed from API
+      // OpenOptdef("random_access_max_buffer_size",           ODEF {
+      //	       o->random_access_max_buffer_size           = arg.as_size_t(); } ),
       OpenOptdef("writable_file_max_buffer_size",           ODEF {
 	       o->writable_file_max_buffer_size           = arg.as_size_t(); } ),
       OpenOptdef("use_adaptive_mutex",                      ODEF {
@@ -1080,8 +1081,9 @@ lookup_open_optdef_and_apply(rocksdb::Options *options,
 	       o->allow_2pc                               = arg.as_bool(); } ),
       //         "row_cache" - shared_ptr<Cache>
       //         "wal_filter" - WalFilter*
-      OpenOptdef("fail_ifoptions_file_error",               ODEF {
-	       o->fail_if_options_file_error              = arg.as_bool(); } ),
+      // DEPRECATED in RocksDB 10.x: fail_if_options_file_error removed from API
+      // OpenOptdef("fail_ifoptions_file_error",               ODEF {
+      //	       o->fail_if_options_file_error              = arg.as_bool(); } ),
       OpenOptdef("dump_malloc_stats",                       ODEF {
 	       o->dump_malloc_stats                       = arg.as_bool(); } ),
       OpenOptdef("avoid_flush_during_recovery",             ODEF {
