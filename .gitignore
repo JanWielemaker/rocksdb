@@ -1,3 +1,24 @@
 buildenv.sh
 status.db
 lib/
+
+# vcpkg artifacts
+vcpkg_installed/
+.vs/
+out/
+
+# CMake artifacts
+build/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.vcxproj
+*.vcxproj.filters
+*.sln
+*.dir/
+
+# Windows module output (keep lib/ structure but ignore binary contents)
+lib/x64-win64/*.dll
+lib/x64-win64/*.exp
+lib/x64-win64/*.ilk
+lib/x64-win64/*.pdb

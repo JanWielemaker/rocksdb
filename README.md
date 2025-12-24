@@ -52,6 +52,47 @@ If the above fails
     `Makefile` to suit your installation and re-run the pack_rebuild/1
     command.
 
+## Installation on Windows
+
+**Windows users:** The standard Unix build process (Makefile + git submodule) is not supported on Windows. Instead, use the native MSVC build with vcpkg.
+
+**See [README-Windows.md](README-Windows.md)** for complete Windows installation instructions.
+
+### Quick Start (Windows)
+
+**Prerequisites:**
+1. Install [vcpkg](https://vcpkg.io/)
+2. Install [Visual Studio 2022](https://visualstudio.microsoft.com/downloads/) with C++ workload
+3. Install [SWI-Prolog 10.0.0+](https://www.swi-prolog.org/Download.html)
+
+**Build:**
+```cmd
+# 1. Install dependencies (first time: ~30-40 minutes)
+C:\vcpkg\vcpkg.exe install
+
+# 2. Configure with CMake
+mkdir build && cd build
+cmake .. -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
+
+# 3. Build
+cmake --build . --config Release
+
+# 4. Install pack
+cd ..
+swipl -g "pack_install('.',[upgrade(true)]),halt"
+```
+
+**Why vcpkg for Windows?**
+
+The vcpkg approach solves all Windows-specific build issues:
+- Provides pre-configured RocksDB with MSVC compatibility
+- Handles all compression library dependencies automatically
+- No jemalloc/tcmalloc conflicts
+- RTTI enabled by default
+- Native Windows DLLs
+
+For troubleshooting and advanced configuration, see [README-Windows.md](README-Windows.md).
+
 ### Status
 
 The wrapper provides most of functionality of RocksDB.  Column
