@@ -22,3 +22,7 @@ lib/x64-win64/*.dll
 lib/x64-win64/*.exp
 lib/x64-win64/*.ilk
 lib/x64-win64/*.pdb
+
+# Test databases (RocksDB directories created during testing)
+testdb_windows.db/
+*.db/
