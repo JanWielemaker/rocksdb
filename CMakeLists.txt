@@ -1,4 +1,18 @@
 cmake_minimum_required(VERSION 3.15)
+
+# Auto-configure vcpkg toolchain on Windows if not already set
+if(WIN32 AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+    if(DEFINED ENV{VCPKG_ROOT})
+        set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
+        message(STATUS "Using vcpkg toolchain from VCPKG_ROOT: ${CMAKE_TOOLCHAIN_FILE}")
+    elseif(EXISTS "C:/vcpkg/scripts/buildsystems/vcpkg.cmake")
+        set(CMAKE_TOOLCHAIN_FILE "C:/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
+        message(STATUS "Using vcpkg toolchain from default location: ${CMAKE_TOOLCHAIN_FILE}")
+    else()
+        message(WARNING "vcpkg toolchain not found. RocksDB may not be found. Set VCPKG_ROOT environment variable or CMAKE_TOOLCHAIN_FILE.")
+    endif()
+endif()
+
 project(swi-prolog-rocksdb VERSION 0.14.4)
 
 # Platform detection
