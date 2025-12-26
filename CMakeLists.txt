@@ -96,15 +96,39 @@ add_library(rocksdb4pl MODULE cpp/rocksdb4pl.cpp)
 # Link RocksDB
 target_link_libraries(rocksdb4pl PRIVATE RocksDB::rocksdb)
 
+# =============================================================================
+# Create swipl::libswipl Target if Missing
+# =============================================================================
+# swipl.cmake has a bug on Windows where it looks for SWIPLTargets.cmake
+# in the wrong directory (parent of swipl_home_dir instead of lib/cmake/swipl).
+# Work around by creating the target manually if it doesn't exist.
+if(NOT TARGET swipl::libswipl)
+    if(DEFINED ENV{SWIPL_HOME_DIR})
+        set(SWIPL_HOME "$ENV{SWIPL_HOME_DIR}")
+    elseif(EXISTS "C:/Program Files/swipl")
+        set(SWIPL_HOME "C:/Program Files/swipl")
+    endif()
+
+    if(SWIPL_HOME AND EXISTS "${SWIPL_HOME}/include/SWI-Prolog.h")
+        message(STATUS "Creating swipl::libswipl target manually (swipl.cmake workaround)")
+        add_library(swipl::libswipl SHARED IMPORTED)
+        set_target_properties(swipl::libswipl PROPERTIES
+            INTERFACE_INCLUDE_DIRECTORIES "${SWIPL_HOME}/include"
+            IMPORTED_LOCATION "${SWIPL_HOME}/bin/libswipl.dll"
+            IMPORTED_IMPLIB "${SWIPL_HOME}/bin/libswipl.lib"
+        )
+    endif()
+endif()
+
 # Link SWI-Prolog using swipl.cmake's helper function if available
-if(COMMAND target_link_swipl)
+if(COMMAND target_link_swipl AND TARGET swipl::libswipl)
     message(STATUS "Using target_link_swipl() for SWI-Prolog linking")
     target_link_swipl(rocksdb4pl)
 elseif(TARGET swipl::libswipl)
     message(STATUS "Using swipl::libswipl target for SWI-Prolog linking")
     target_link_libraries(rocksdb4pl PRIVATE swipl::libswipl)
 else()
-    # Fallback: Manual configuration for Windows
+    # Final fallback: Manual configuration
     message(STATUS "Using manual SWI-Prolog configuration")
     set(SWIPL_ROOT "C:/Program Files/swipl" CACHE PATH "SWI-Prolog installation")
     if(EXISTS "${SWIPL_ROOT}/include/SWI-Prolog.h")
