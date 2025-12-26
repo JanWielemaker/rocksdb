@@ -154,11 +154,16 @@ endif()
 
 file(MAKE_DIRECTORY "${OUTPUT_DIR}")
 
+# Set output properties - explicitly set for each config to avoid subdirectories
 set_target_properties(rocksdb4pl PROPERTIES
     PREFIX ""
     SUFFIX ".dll"
     LIBRARY_OUTPUT_DIRECTORY "${OUTPUT_DIR}"
+    LIBRARY_OUTPUT_DIRECTORY_DEBUG "${OUTPUT_DIR}"
+    LIBRARY_OUTPUT_DIRECTORY_RELEASE "${OUTPUT_DIR}"
     RUNTIME_OUTPUT_DIRECTORY "${OUTPUT_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${OUTPUT_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${OUTPUT_DIR}"
 )
 
 # =============================================================================
@@ -177,9 +182,13 @@ endif()
 # =============================================================================
 # Installation (for pack manager)
 # =============================================================================
+# Set install prefix to the pack directory for pack_install
+# This avoids installing to system directories like C:/Program Files
+set(CMAKE_INSTALL_PREFIX "${CMAKE_CURRENT_SOURCE_DIR}" CACHE PATH "" FORCE)
+
 install(TARGETS rocksdb4pl
-    LIBRARY DESTINATION lib
-    RUNTIME DESTINATION lib
+    LIBRARY DESTINATION "${swipl_module_dir}"
+    RUNTIME DESTINATION "${swipl_module_dir}"
 )
 
 # =============================================================================
