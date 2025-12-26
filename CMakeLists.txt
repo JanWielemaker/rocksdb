@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.15)
 
-# Auto-configure vcpkg toolchain on Windows if not already set
+# =============================================================================
+# vcpkg Toolchain Configuration
+# =============================================================================
+# For standalone builds, auto-detect vcpkg toolchain.
+# For pack_install, cmake_options.pl injects this via cmake_option/2.
 if(WIN32 AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
     if(DEFINED ENV{VCPKG_ROOT})
         set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
@@ -9,128 +13,160 @@ if(WIN32 AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
         set(CMAKE_TOOLCHAIN_FILE "C:/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
         message(STATUS "Using vcpkg toolchain from default location: ${CMAKE_TOOLCHAIN_FILE}")
     else()
-        message(WARNING "vcpkg toolchain not found. RocksDB may not be found. Set VCPKG_ROOT environment variable or CMAKE_TOOLCHAIN_FILE.")
+        message(WARNING "vcpkg toolchain not found. Set VCPKG_ROOT or CMAKE_TOOLCHAIN_FILE.")
     endif()
 endif()
 
-project(swi-prolog-rocksdb VERSION 0.14.4)
+project(rocksdb4pl VERSION 0.14.4 LANGUAGES CXX)
 
-# Platform detection
-if(WIN32)
-    set(BUILDING_ON_WINDOWS TRUE)
-    message(STATUS "Building for Windows with MSVC")
-endif()
-
-# Compiler requirements
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Find RocksDB package (via vcpkg on Windows)
+# =============================================================================
+# SWI-Prolog Integration via swipl.cmake
+# =============================================================================
+# swipl.cmake provides:
+#   - swipl::libswipl target
+#   - target_link_swipl() function
+#   - swipl_module_dir variable
+#
+# When invoked by pack_install, SWIPL_HOME_DIR environment variable is set.
+# For standalone builds, fall back to default installation path.
+
+set(SWIPL_CMAKE_LOADED FALSE)
+
+if(DEFINED ENV{SWIPL_HOME_DIR})
+    # pack_install context - use environment variable
+    set(SWIPL_CMAKE_PATH "$ENV{SWIPL_HOME_DIR}/cmake/swipl.cmake")
+    if(EXISTS "${SWIPL_CMAKE_PATH}")
+        message(STATUS "Loading swipl.cmake from pack_install context: ${SWIPL_CMAKE_PATH}")
+        include("${SWIPL_CMAKE_PATH}")
+        set(SWIPL_CMAKE_LOADED TRUE)
+    endif()
+endif()
+
+if(NOT SWIPL_CMAKE_LOADED AND WIN32)
+    # Standalone Windows build - check default installation
+    set(SWIPL_CMAKE_PATH "C:/Program Files/swipl/cmake/swipl.cmake")
+    if(EXISTS "${SWIPL_CMAKE_PATH}")
+        message(STATUS "Loading swipl.cmake from default location: ${SWIPL_CMAKE_PATH}")
+        include("${SWIPL_CMAKE_PATH}")
+        set(SWIPL_CMAKE_LOADED TRUE)
+    endif()
+endif()
+
+if(NOT SWIPL_CMAKE_LOADED AND NOT WIN32)
+    # Unix standalone - try to find swipl and load its cmake module
+    find_program(SWIPL_EXECUTABLE swipl)
+    if(SWIPL_EXECUTABLE)
+        execute_process(
+            COMMAND ${SWIPL_EXECUTABLE} --dump-runtime-variables
+            OUTPUT_VARIABLE SWIPL_VARS
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            RESULT_VARIABLE SWIPL_RESULT
+        )
+        if(SWIPL_RESULT EQUAL 0)
+            string(REGEX MATCH "PLBASE=\"([^\"]+)\"" _ "${SWIPL_VARS}")
+            set(SWIPL_BASE "${CMAKE_MATCH_1}")
+            set(SWIPL_CMAKE_PATH "${SWIPL_BASE}/cmake/swipl.cmake")
+            if(EXISTS "${SWIPL_CMAKE_PATH}")
+                message(STATUS "Loading swipl.cmake from swipl query: ${SWIPL_CMAKE_PATH}")
+                include("${SWIPL_CMAKE_PATH}")
+                set(SWIPL_CMAKE_LOADED TRUE)
+            endif()
+        endif()
+    endif()
+endif()
+
+if(NOT SWIPL_CMAKE_LOADED)
+    message(WARNING "Could not load swipl.cmake - falling back to manual configuration")
+endif()
+
+# =============================================================================
+# Find RocksDB via vcpkg
+# =============================================================================
 find_package(RocksDB CONFIG REQUIRED)
 message(STATUS "Found RocksDB: ${RocksDB_DIR}")
 
-# SWI-Prolog integration
-if(BUILDING_ON_WINDOWS)
-    # Windows: Use configurable paths with sensible defaults
-    set(SWIPL_ROOT "C:/Program Files/swipl" CACHE PATH "SWI-Prolog installation directory")
-
-    if(NOT EXISTS "${SWIPL_ROOT}")
-        message(FATAL_ERROR "SWI-Prolog not found at ${SWIPL_ROOT}. Set SWIPL_ROOT to your SWI-Prolog installation.")
-    endif()
-
-    set(SWIPL_INCLUDE_DIR "${SWIPL_ROOT}/include")
-    set(SWIPL_LIBRARY "${SWIPL_ROOT}/bin/libswipl.lib")
-    set(SWIPL_MODULE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib/x64-win64")
-    set(MODULE_EXT "dll")
-
-    message(STATUS "SWI-Prolog include: ${SWIPL_INCLUDE_DIR}")
-    message(STATUS "SWI-Prolog library: ${SWIPL_LIBRARY}")
-    message(STATUS "Module output directory: ${SWIPL_MODULE_DIR}")
-
-    # Create output directory if it doesn't exist
-    file(MAKE_DIRECTORY "${SWIPL_MODULE_DIR}")
-else()
-    # Unix: Query swipl for paths
-    find_program(SWIPL_EXECUTABLE swipl REQUIRED)
-
-    execute_process(
-        COMMAND ${SWIPL_EXECUTABLE} --dump-runtime-variables
-        OUTPUT_VARIABLE SWIPL_VARS
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        RESULT_VARIABLE SWIPL_RESULT
-    )
-
-    if(NOT SWIPL_RESULT EQUAL 0)
-        message(FATAL_ERROR "Failed to query SWI-Prolog runtime variables")
-    endif()
-
-    # Parse variables (simplified - may need enhancement)
-    string(REGEX MATCH "PLBASE=\"([^\"]+)\"" _ "${SWIPL_VARS}")
-    set(SWIPL_BASE "${CMAKE_MATCH_1}")
-
-    string(REGEX MATCH "PLARCH=\"([^\"]+)\"" _ "${SWIPL_VARS}")
-    set(SWIPL_ARCH "${CMAKE_MATCH_1}")
-
-    set(SWIPL_INCLUDE_DIR "${SWIPL_BASE}/include")
-    set(SWIPL_LIBRARY "${SWIPL_BASE}/lib/${SWIPL_ARCH}/libswipl.so")
-    set(SWIPL_MODULE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib/${SWIPL_ARCH}")
-    set(MODULE_EXT "so")
-
-    file(MAKE_DIRECTORY "${SWIPL_MODULE_DIR}")
-endif()
-
-# Foreign library target - MODULE type creates a shared library that can be loaded dynamically
+# =============================================================================
+# Build Foreign Module
+# =============================================================================
 add_library(rocksdb4pl MODULE cpp/rocksdb4pl.cpp)
 
-# Include directories
-target_include_directories(rocksdb4pl PRIVATE
-    ${SWIPL_INCLUDE_DIR}
-)
+# Link RocksDB
+target_link_libraries(rocksdb4pl PRIVATE RocksDB::rocksdb)
 
-# Link libraries
-target_link_libraries(rocksdb4pl PRIVATE
-    RocksDB::rocksdb
-    ${SWIPL_LIBRARY}
-)
-
-# Set output properties
-set_target_properties(rocksdb4pl PROPERTIES
-    PREFIX ""  # No lib prefix on the output file
-    SUFFIX ".${MODULE_EXT}"
-    LIBRARY_OUTPUT_DIRECTORY "${SWIPL_MODULE_DIR}"
-    RUNTIME_OUTPUT_DIRECTORY "${SWIPL_MODULE_DIR}"  # For DLLs on Windows
-)
-
-# Windows-specific: Copy RocksDB DLL dependencies to module directory
-if(BUILDING_ON_WINDOWS)
-    # Note: RocksDB::rocksdb-shared is the shared library target
-    # We need to copy the DLL to the module directory so SWI-Prolog can find it
-    add_custom_command(TARGET rocksdb4pl POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E echo "Copying RocksDB DLL to module directory..."
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "$<TARGET_FILE:RocksDB::rocksdb-shared>"
-            "${SWIPL_MODULE_DIR}"
-        COMMENT "Copying RocksDB DLL dependencies"
-    )
-
-    # Also copy other potential DLL dependencies
-    # vcpkg usually handles this via vcpkg_copy_dlls but we're doing it manually
-    message(STATUS "DLL dependencies will be copied to ${SWIPL_MODULE_DIR}")
+# Link SWI-Prolog using swipl.cmake's helper function if available
+if(COMMAND target_link_swipl)
+    message(STATUS "Using target_link_swipl() for SWI-Prolog linking")
+    target_link_swipl(rocksdb4pl)
+elseif(TARGET swipl::libswipl)
+    message(STATUS "Using swipl::libswipl target for SWI-Prolog linking")
+    target_link_libraries(rocksdb4pl PRIVATE swipl::libswipl)
+else()
+    # Fallback: Manual configuration for Windows
+    message(STATUS "Using manual SWI-Prolog configuration")
+    set(SWIPL_ROOT "C:/Program Files/swipl" CACHE PATH "SWI-Prolog installation")
+    if(EXISTS "${SWIPL_ROOT}/include/SWI-Prolog.h")
+        target_include_directories(rocksdb4pl PRIVATE "${SWIPL_ROOT}/include")
+        target_link_libraries(rocksdb4pl PRIVATE "${SWIPL_ROOT}/bin/libswipl.lib")
+    else()
+        message(FATAL_ERROR "SWI-Prolog not found. Set SWIPL_ROOT to your installation.")
+    endif()
 endif()
 
+# =============================================================================
+# Output Directory Configuration
+# =============================================================================
+# Use swipl_module_dir if set by swipl.cmake, otherwise use default
+if(DEFINED swipl_module_dir AND NOT "${swipl_module_dir}" STREQUAL "")
+    set(OUTPUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/${swipl_module_dir}")
+    message(STATUS "Using module directory from swipl.cmake: ${OUTPUT_DIR}")
+else()
+    # Default for Windows standalone builds
+    set(OUTPUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib/x64-win64")
+    message(STATUS "Using default module directory: ${OUTPUT_DIR}")
+endif()
+
+file(MAKE_DIRECTORY "${OUTPUT_DIR}")
+
+set_target_properties(rocksdb4pl PROPERTIES
+    PREFIX ""
+    SUFFIX ".dll"
+    LIBRARY_OUTPUT_DIRECTORY "${OUTPUT_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY "${OUTPUT_DIR}"
+)
+
+# =============================================================================
+# Copy RocksDB DLL Dependencies (Windows)
+# =============================================================================
+if(WIN32 AND TARGET RocksDB::rocksdb-shared)
+    add_custom_command(TARGET rocksdb4pl POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E echo "Copying RocksDB DLL to ${OUTPUT_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:RocksDB::rocksdb-shared>"
+            "${OUTPUT_DIR}"
+        COMMENT "Copying RocksDB DLL dependencies"
+    )
+endif()
+
+# =============================================================================
 # Installation (for pack manager)
+# =============================================================================
 install(TARGETS rocksdb4pl
     LIBRARY DESTINATION lib
     RUNTIME DESTINATION lib
 )
 
-# Display build summary
+# =============================================================================
+# Build Summary
+# =============================================================================
 message(STATUS "========================================")
 message(STATUS "SWI-Prolog RocksDB Pack Configuration")
 message(STATUS "========================================")
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "C++ Compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
 message(STATUS "C++ Standard: C++${CMAKE_CXX_STANDARD}")
-message(STATUS "RocksDB target: RocksDB::rocksdb")
-message(STATUS "Output module: ${SWIPL_MODULE_DIR}/rocksdb4pl.${MODULE_EXT}")
+message(STATUS "swipl.cmake loaded: ${SWIPL_CMAKE_LOADED}")
+message(STATUS "Output directory: ${OUTPUT_DIR}")
 message(STATUS "========================================")

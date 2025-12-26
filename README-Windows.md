@@ -24,9 +24,54 @@ This guide explains how to build and use the RocksDB pack natively on Windows us
 5. **Git for Windows**
    - Download: https://git-scm.com/download/win
 
+6. **CMake** (if not in PATH)
+   - Usually installed with Visual Studio
+   - Or download: https://cmake.org/download/
+
 ---
 
-## Installation Steps
+## Quick Install via pack_install (Recommended)
+
+If you have all prerequisites installed, you can install directly via SWI-Prolog's pack manager:
+
+### Step 1: Pre-install RocksDB via vcpkg
+
+```cmd
+C:\vcpkg\vcpkg.exe install rocksdb[lz4,snappy,zlib,zstd]:x64-windows
+```
+
+This takes 30-40 minutes the first time (RocksDB is compiled from source).
+
+### Step 2: Set Environment Variables
+
+Open a command prompt and set:
+
+```cmd
+set VCPKG_ROOT=C:\vcpkg
+set PATH=C:\Program Files\CMake\bin;%PATH%
+```
+
+Or make permanent via System Properties > Environment Variables.
+
+### Step 3: Install via pack_install
+
+```cmd
+swipl -g "pack_install(rocksdb, [url('https://github.com/EricGT/rocksdb.git'), branch('feature/windows-vcpkg-support')]), halt"
+```
+
+### Step 4: Verify Installation
+
+```prolog
+?- use_module(library(rocksdb)).
+true.
+
+?- rocks_open('test.db', DB, []), rocks_put(DB, key, value), rocks_get(DB, key, V), rocks_close(DB).
+V = value.
+```
+
+---
+
+## Manual Installation Steps
 
 ### Step 1: Install vcpkg
 
