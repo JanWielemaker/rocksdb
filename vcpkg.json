@@ -1,7 +1,6 @@
 {
-  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
-  "name": "swi-prolog-rocksdb",
-  "version-string": "0.14.4",
+  "name": "rocksdb4pl",
+  "version": "0.14.4",
   "dependencies": [
     {
       "name": "rocksdb",
