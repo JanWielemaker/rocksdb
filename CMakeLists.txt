@@ -16,6 +16,11 @@ if(WIN32 AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
         message(WARNING "vcpkg toolchain not found. Set VCPKG_ROOT or CMAKE_TOOLCHAIN_FILE.")
     endif()
 endif()
+# Force x64 architecture for vcpkg on Windows (must be set before project())
+if(WIN32 AND NOT DEFINED VCPKG_TARGET_TRIPLET)
+    set(VCPKG_TARGET_TRIPLET "x64-windows" CACHE STRING "vcpkg target triplet")
+    message(STATUS "Using vcpkg triplet: ${VCPKG_TARGET_TRIPLET}")
+endif()
 
 project(rocksdb4pl VERSION 0.14.4 LANGUAGES CXX)
 
