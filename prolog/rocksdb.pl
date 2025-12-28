@@ -60,6 +60,14 @@
 	  ]).
 :- use_module(library(option)).
 :- use_module(library(error)).
+
+:- multifile user:file_search_path/2.
+:- dynamic user:file_search_path/2.
+
+user:file_search_path(foreign, PackLib) :-
+    current_prolog_flag(pack_path, PackPath),
+    atom_concat(PackPath, '/rocksdb/lib', PackLib).
+
 :- use_foreign_library(foreign(rocksdb4pl)).
 
 :- meta_predicate
