@@ -15,6 +15,9 @@ REM Clone the repository
 git clone --branch feature/windows-vcpkg-support https://github.com/EricGT/rocksdb.git C:\rocksdb-pack
 cd C:\rocksdb-pack
 
+REM Add SWI-Prolog to PATH (required for CMake to find swipl)
+set PATH=C:\Program Files\swipl\bin;%PATH%
+
 REM Build with CMake
 mkdir build
 cd build
