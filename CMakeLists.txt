@@ -182,17 +182,11 @@ if(WIN32)
         set(VCPKG_BIN_DIR "C:/vcpkg/installed/x64-windows/bin")
     endif()
 
-    # Find SWI-Prolog bin directory
-    if(DEFINED ENV{SWIPL_HOME_DIR})
-        set(SWIPL_BIN_DIR "$ENV{SWIPL_HOME_DIR}/bin")
-    elseif(EXISTS "C:/Program Files/swipl/bin")
-        set(SWIPL_BIN_DIR "C:/Program Files/swipl/bin")
-    endif()
-
     if(VCPKG_BIN_DIR AND EXISTS "${VCPKG_BIN_DIR}")
         message(STATUS "vcpkg bin directory: ${VCPKG_BIN_DIR}")
 
         # Copy all vcpkg DLLs to pack's lib directory
+        # This is sufficient - SWI-Prolog finds DLLs in the same directory as the module
         add_custom_command(TARGET rocksdb4pl POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E echo "Copying vcpkg DLLs to ${OUTPUT_DIR}"
             COMMAND ${CMAKE_COMMAND} -E copy_if_different "${VCPKG_BIN_DIR}/rocksdb-shared.dll" "${OUTPUT_DIR}"
@@ -202,22 +196,6 @@ if(WIN32)
             COMMAND ${CMAKE_COMMAND} -E copy_if_different "${VCPKG_BIN_DIR}/zstd.dll" "${OUTPUT_DIR}"
             COMMENT "Copying RocksDB DLL dependencies to pack lib directory"
         )
-
-        # Copy to SWI-Prolog bin directory (Option A - makes DLLs globally available)
-        # NOTE: This may fail if SWI-Prolog is in Program Files and not running as admin
-        if(SWIPL_BIN_DIR AND EXISTS "${SWIPL_BIN_DIR}")
-            message(STATUS "Will copy DLLs to SWI-Prolog bin: ${SWIPL_BIN_DIR}")
-
-            add_custom_command(TARGET rocksdb4pl POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E echo "Copying vcpkg DLLs to SWI-Prolog bin directory"
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${VCPKG_BIN_DIR}/rocksdb-shared.dll" "${SWIPL_BIN_DIR}" || (exit 0)
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${VCPKG_BIN_DIR}/lz4.dll" "${SWIPL_BIN_DIR}" || (exit 0)
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${VCPKG_BIN_DIR}/snappy.dll" "${SWIPL_BIN_DIR}" || (exit 0)
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${VCPKG_BIN_DIR}/zlib1.dll" "${SWIPL_BIN_DIR}" || (exit 0)
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${VCPKG_BIN_DIR}/zstd.dll" "${SWIPL_BIN_DIR}" || (exit 0)
-                COMMENT "Copying RocksDB DLL dependencies to SWI-Prolog bin"
-            )
-        endif()
     elseif(TARGET RocksDB::rocksdb-shared)
         # Fallback: just copy the RocksDB DLL if vcpkg bin not found
         add_custom_command(TARGET rocksdb4pl POST_BUILD
