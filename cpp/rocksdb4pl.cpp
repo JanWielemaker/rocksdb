@@ -516,7 +516,7 @@ public:
     { if ( (tid=Plx_thread_attach_engine(nullptr)) < 0 )
       { PlTerm ex(Plx_exception(0));
 	if ( ex.not_null() )
-	  throw PlException(ex);
+	  throw PlExceptionFromTerm(ex);
 	else
 	  throw PlResourceError("memory");
       }
